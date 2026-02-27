@@ -8,8 +8,11 @@
 
 import argparse
 import logging
+import multiprocessing as mp
+import os
 import pickle
 from collections import defaultdict
+from functools import partial
 
 import numpy as np
 import polars as pl
@@ -59,7 +62,7 @@ def fit_motif(x_data, y_data):
         y_data.filter(x_data < 0.5),
         p0=initial_guesses_m6A,
         bounds=bounds_m6A,
-        maxfev=5_000,  # Reduced from 20_000
+        maxfev=20_000,
     )
 
     # Calculate residuals for unconverted rate fitting
@@ -73,7 +76,7 @@ def fit_motif(x_data, y_data):
         y_residual,
         p0=initial_guesses_unconverted,
         bounds=bounds_unconverted,
-        maxfev=5_000,  # Reduced from 20_000
+        maxfev=20_000,
     )
 
     # Use initial fits as prior to fit the combined function again
@@ -88,13 +91,25 @@ def fit_motif(x_data, y_data):
         y_data,
         p0=combined_initial_guess,
         bounds=bounds_combined,
-        maxfev=10_000,  # Reduced from 40_000
+        maxfev=40_000,
     )
 
     return params_combined
 
 
-def calculate_background_fitting(df_sites, libraries):
+def _fit_motif_worker(args):
+    """Worker function for parallel motif fitting."""
+    motif, x_list, y_list = args
+    try:
+        if len(x_list) < 5:
+            return (motif, None, f"insufficient data ({len(x_list)} < 5)")
+        result = fit_motif(pl.Series(x_list), pl.Series(y_list))
+        return (motif, result, None)
+    except Exception as e:
+        return (motif, None, str(e))
+
+
+def calculate_background_fitting(df_sites, libraries, n_threads=None):
     library2background = defaultdict(dict)
     library2gcfit = defaultdict(dict)
 
@@ -129,24 +144,36 @@ def calculate_background_fitting(df_sites, libraries):
             .sort("Motif3", "GC")
         )
 
+        # Collect motif data for parallel processing
+        motif_tasks = []
         for (m,), df2 in df.group_by("Motif3", maintain_order=True):
             df2 = df2.sort("GC").select("GC", "Ratio", "Count")
             x, y, z = df2["GC"], df2["Ratio"], df2["Count"]
             library2background[library][m] = (x, y, z)
-            
-            # Skip fitting if insufficient unique data points
-            if len(x) < 5:
-                logging.info(f"    Skipping fit for motif {m}: only {len(x)} unique GC values (need >= 5)")
-                library2gcfit[library][m] = [0.0001, 8, 0.03, 10, 0.4]  # Fallback
-                continue
-            
-            try:
-                library2gcfit[library][m] = fit_motif(
-                    pl.Series(x.to_list()), pl.Series(y.to_list())
-                )
-            except Exception as e:
-                logging.warning(f"    Failed to fit motif {m} for {library}: {e}")
-                library2gcfit[library][m] = [0.0001, 8, 0.03, 10, 0.4] # Fallback to some defaults if fit fails
+            motif_tasks.append((m, x.to_list(), y.to_list()))
+        
+        # Parallel fitting using multiprocessing
+        n_workers = n_threads or min(mp.cpu_count(), len(motif_tasks))
+        n_workers = max(1, n_workers)
+        
+        if len(motif_tasks) > 1 and n_workers > 1:
+            logging.info(f"    Fitting {len(motif_tasks)} motifs using {n_workers} workers")
+            with mp.Pool(n_workers) as pool:
+                results = pool.map(_fit_motif_worker, motif_tasks)
+        else:
+            # Sequential for single motif or single thread
+            results = [_fit_motif_worker(task) for task in motif_tasks]
+        
+        # Collect results
+        for motif, result, error in results:
+            if error:
+                if "insufficient data" in error:
+                    logging.info(f"    Skipping fit for motif {motif}: {error}")
+                else:
+                    logging.warning(f"    Failed to fit motif {motif} for {library}: {error}")
+                library2gcfit[library][motif] = [0.0001, 8, 0.03, 10, 0.4]
+            else:
+                library2gcfit[library][motif] = result
 
     return library2background, library2gcfit
 
@@ -270,9 +297,12 @@ if __name__ == "__main__":
         pl.DataFrame().write_csv(output_file, separator="\t")
         exit(0)
 
+    # Get thread count from environment (Snakemake sets this) or use CPU count
+    n_threads = int(os.environ.get('SLURM_CPUS_PER_TASK', mp.cpu_count()))
+    
     logging.info(f"Processing {len(df_sites)} sites for libraries: {libraries}")
-    logging.info("Calculating background and fitting")
-    library2background, library2gcfit = calculate_background_fitting(df_sites, libraries)
+    logging.info(f"Calculating background and fitting using {n_threads} threads")
+    library2background, library2gcfit = calculate_background_fitting(df_sites, libraries, n_threads)
     
     pickle.dump(
         library2background, open(args.output.removesuffix(".tsv") + ".background.pkl", "wb")
