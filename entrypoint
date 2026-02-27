@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+#
+# Entrypoint for dichromat Pipeline
+#
+
+logo="
+\033[1;31m  ▄████▄   \033[1;37m▄████▄   \033[1;31m▄████▄   \033[1;37m▄████▄   \033[1;31m▄████▄
+\033[1;31m ██  ▀██▄ \033[1;37m██  ▀██▄ \033[1;31m██  ▀██▄ \033[1;37m██  ▀██▄ \033[1;31m██  ▀██▄  \033[1;37m( . ) <~
+\033[1;31m ▀██████▀ \033[1;37m ▀██████▀ \033[1;31m ▀██████▀ \033[1;37m ▀██████▀ \033[1;31m ▀██████▀
+
+\033[1;37m      \033[38;2;255;0;0mD \033[38;2;255;32;0mI \033[38;2;255;64;0mC \033[38;2;255;96;0mH \033[38;2;255;128;0mR \033[38;2;255;160;0mO \033[38;2;255;192;0mM \033[38;2;255;224;0mA \033[38;2;255;255;0mT\033[0m
+\033[1;34m  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
+\033[1;32m   General Pipeline for eTAM-seq, CAM-seq, GLORI, BS-seq, etc. \033[0m
+\033[1;34m  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
+"
+
+printf "$logo\n"
+
+# Set default values
+snake="/pipeline/Snakefile"
+conf="config.yaml"
+VENV_PYTHON="/opt/app_venv/bin/python"
+
+POSITIONAL_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+  -j | --jobs | --cores)
+    cores_cmd="$2"
+    shift
+    shift
+    ;;
+  -c | --conf)
+    conf="$2"
+    shift
+    shift
+    ;;
+  --mysnake)
+    snake="$2"
+    shift
+    shift
+    ;;
+  *)
+    POSITIONAL_ARGS+=("$1")
+    shift
+    ;;
+  esac
+done
+set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
+
+if [ ! -f "${conf}" ]; then
+  echo -e "\033[0;31mError:\033[0m Configuration file '${conf}' not found!"
+  exit 1
+fi
+
+# --- Dynamic Path Validation ---
+# Detects if paths specified in the config are accessible within the container.
+missing_paths=$($VENV_PYTHON - <<EOF
+import yaml, os
+try:
+    cwd = os.getcwd()
+    with open("${conf}") as f:
+        cfg = yaml.safe_load(f)
+    
+    batch = cfg.get("batch", "dichromat_run")
+    workspace = f"workspace_{batch}"
+    
+    def is_likely_path(s):
+        if not isinstance(s, str): return False
+        if any(s.startswith(p) for p in ["/", "~/", "../", "./"]): return True
+        if "/" in s: return True
+        extensions = [".fa", ".fasta", ".fq", ".fastq", ".gz", ".gtf", ".ht2", ".bam"]
+        if any(s.lower().endswith(ext) for ext in extensions): return True
+        return False
+
+    def find_paths(data):
+        paths = []
+        if isinstance(data, dict):
+            for v in data.values(): paths.extend(find_paths(v))
+        elif isinstance(data, list):
+            for v in data: paths.extend(find_paths(v))
+        elif is_likely_path(data):
+            p = os.path.expanduser(data)
+            if not os.path.isabs(p):
+                p = os.path.abspath(p)
+            paths.append(os.path.normpath(p))
+        return paths
+        
+    all_paths = find_paths(cfg)
+    missing = []
+    for p in all_paths:
+        if p.startswith(os.path.abspath(workspace)):
+            continue
+        if not os.path.exists(p):
+            # Check for index prefixes (parent dir must be a valid directory)
+            parent = os.path.dirname(p)
+            if not (parent and os.path.isdir(parent)):
+                missing.append(p)
+    if missing:
+        print("\n".join(sorted(list(set(missing)))))
+except Exception:
+    pass
+EOF
+)
+
+if [ -n "$missing_paths" ]; then
+    echo -e "\033[1;33m⚠️  Accessibility Warning:\033[0m"
+    echo -e "The following paths from your config are not accessible inside the container:"
+    while read -r p; do
+        echo -e "  - $p"
+    done <<< "$missing_paths"
+    echo ""
+    echo -e "\033[1;37mSuggestion:\033[0m Ensure these paths are mounted using the \033[1;32m-B\033[0m (bind) flag."
+    echo -e "Example: apptainer run \033[1;32m-B /source:/target dichromat.sif ...\033[0m"
+    echo ""
+fi
+
+if [ -z "${cores_cmd}" ]; then
+  cores=64
+else
+  cores=${cores_cmd}
+fi
+
+export LC_ALL=C.UTF-8
+LOGFILE="dichromat_LOG_$(date +"%F-%H%M%S").txt"
+echo -e "\033[0;32m📝 LOG FILE:\033[0m ${LOGFILE}"
+printf "\033[0;33m ⚙️  Analyzing DAG and executing jobs...\033[0m"
+
+snakemake --rerun-incomplete --quiet rules --jobs "${cores}" --snakefile "${snake}" --configfiles /pipeline/default.yaml "${conf}" "$@" 1>"${LOGFILE}" 2>"${LOGFILE}"
+
+if [ $? -eq 0 ]; then
+  printf "\r\033[K"
+  echo -e "\033[0;32m✅ Pipeline finished successfully!\033[0m"
+else
+  printf "\r\033[K"
+  echo -e "\033[0;31m❌ Pipeline failed. Check the log file for details.\033[0m"
+fi

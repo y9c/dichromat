@@ -1,0 +1,32 @@
+# Default configurations for the dichromat pipeline
+# These paths are relative to the container filesystem
+
+container: "/data/project/changye/chye/projects/m6A_new/dichromat.sif"
+
+# Pipeline Logic
+batch: "dichromat_run"
+is_etam: false
+skip_samples: []
+
+# Default built-in adapter name (passed to cutseq -A)
+libtype: "TAKARAV3"
+# Default custom adapter sequence (passed to cutseq -a if libtype is empty)
+adapter: ""
+
+path:
+  python: "python"
+  samtools: "samtools"
+  hisat3n: "hisat-3n"
+  hisat3nbuild: "hisat-3n-build"
+  cutseq: "cutseq"
+  falco: "falco"
+  bgzip: "bgzip"
+  markdup: "markdup"
+  variant: "variant"
+
+min_len: 20
+markdup: true
+splice_genome: true
+splice_contamination: false
+pileup_ct: false
+depth_site: false

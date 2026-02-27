@@ -1,0 +1,34 @@
+# Test Batch Configuration
+batch: "eTAM-debug1223"
+is_etam: true
+skip_samples:
+  - "sample1-FTO"
+  - "sample1-IVT"
+
+# Custom adapter sequence (passed to cutseq -a)
+# If libtype is provided, this sequence is typically ignored by the logic
+adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
+
+# Alternatively, select a built-in adapter name (passed to cutseq -A)
+# libtype: "TAKARAv3"
+
+base_change: 'A,G'
+splice_genome: true
+depth_site: true
+
+# Reference definitions
+reference:
+  contamination:
+    - ~/reference/contamination/contamination.fa
+    - ref/PET28a-tadA.fa
+  genes:
+    - ~/reference/genes/Homo_sapiens.rRNA_tRNA_sncRNA.fa
+  genome:
+    fa: ~/reference/genome/Homo_sapiens/GRCh38.fa
+    gtf: ~/reference/genome/Homo_sapiens/GRCh38.release110.gtf
+    hisat3n: ~/reference/genome/Homo_sapiens/hisat2_tx_3n/GRCh38.release110
+
+samples:
+  sample1:
+    data:
+      - R1: ~/scratch/debug.fq.gz

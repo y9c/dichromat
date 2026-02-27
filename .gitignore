@@ -1,0 +1,58 @@
+# Slurm / Snakemake logs
+*.log
+slurm-*.out
+eTAM_LOG_*.txt
+dichromat_LOG_*.txt
+eTAM_LOG_FINAL.txt
+
+# Build artifacts
+dichromat.sif
+etamseq.def
+.apptainer_cache/
+
+# Development and Local tools
+development/
+dichromat-vm-builder.skill
+
+# Snakemake work directories
+.snakemake/
+.tmp/
+workspace_*/
+
+# Data and references (if kept locally)
+ref/
+rawdata/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Backup
+backup_legacy/
+config.yaml.full
+config.yaml.bak
+config.yaml.test_backup
