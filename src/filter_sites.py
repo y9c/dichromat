@@ -62,7 +62,7 @@ def fit_motif(x_data, y_data):
         y_data.filter(x_data < 0.5),
         p0=initial_guesses_m6A,
         bounds=bounds_m6A,
-        maxfev=20_000,
+        maxfev=10_000,
     )
 
     # Calculate residuals for unconverted rate fitting
@@ -76,7 +76,7 @@ def fit_motif(x_data, y_data):
         y_residual,
         p0=initial_guesses_unconverted,
         bounds=bounds_unconverted,
-        maxfev=20_000,
+        maxfev=10_000,
     )
 
     # Use initial fits as prior to fit the combined function again
@@ -91,7 +91,7 @@ def fit_motif(x_data, y_data):
         y_data,
         p0=combined_initial_guess,
         bounds=bounds_combined,
-        maxfev=40_000,
+        maxfev=20_000,
     )
 
     return params_combined
