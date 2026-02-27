@@ -84,8 +84,8 @@ jobs:
 
       - name: Test Docker image
         run: |
-          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(git rev-parse --short HEAD) snakemake --version
-          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(git rev-parse --short HEAD) hisat-3n --version
+          docker run --rm --entrypoint snakemake ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(git rev-parse --short HEAD) --version
+          docker run --rm --entrypoint hisat-3n ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(git rev-parse --short HEAD) --version
 
   test-pipeline:
     name: Test Pipeline
