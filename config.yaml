@@ -1,5 +1,5 @@
 # Test Batch Configuration
-batch: "eTAM-debug1223"
+batch: "dichromat_run"
 is_etam: true
 skip_samples:
   - "sample1-FTO"

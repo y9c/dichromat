@@ -5,9 +5,8 @@
 ## 📋 Requirements
 
 To run this pipeline, you need the following installed on your host system:
-*   **Snakemake** (>= 8.0 recommended)
 *   **Apptainer** (or Singularity)
-*   **Python 3** (with `pyyaml`)
+*   **Snakemake** (>= 8.0 recommended, optional)
 
 ## 🚀 Quick Start
 

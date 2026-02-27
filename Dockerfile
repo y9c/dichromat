@@ -41,19 +41,33 @@ RUN uv tool install multiqc==1.33 --no-cache && \
 
 # --- Build & STRIP samtools/bgzip ---
 WORKDIR /build/sources
-COPY samtools-1.23.tar.bz2 htslib-1.23.tar.bz2 ./
-RUN tar -xjvf samtools-1.23.tar.bz2 && cd samtools-1.23 && ./configure --without-curses && make -j$(nproc) samtools && strip samtools && mv samtools /usr/local/bin/ && cd .. && \
-    tar -xjvf htslib-1.23.tar.bz2 && cd htslib-1.23 && ./configure && make -j$(nproc) bgzip && strip bgzip && mv bgzip /usr/local/bin/
+RUN curl -L --http1.1 --retry 5 https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 -o samtools.tar.bz2 && \
+    tar -xjvf samtools.tar.bz2 --strip-components 1 && \
+    ./configure --without-curses && \
+    make -j$(nproc) samtools && \
+    strip samtools && \
+    mv samtools /usr/local/bin/ && \
+    rm -rf *
+
+RUN curl -L --http1.1 --retry 5 https://github.com/samtools/htslib/releases/download/${SAMTOOLS_VERSION}/htslib-${SAMTOOLS_VERSION}.tar.bz2 -o htslib.tar.bz2 && \
+    tar -xjvf htslib.tar.bz2 --strip-components 1 && \
+    ./configure && \
+    make -j$(nproc) bgzip && \
+    strip bgzip && \
+    mv bgzip /usr/local/bin/ && \
+    rm -rf *
 
 # --- Build & STRIP hisat-3n ---
-COPY hisat2-hisat-3n.tar.gz .
-RUN tar -xzvf hisat2-hisat-3n.tar.gz && cd hisat2-* && make -j$(nproc) && \
+RUN curl -L --http1.1 --retry 5 https://github.com/DaehwanKimLab/hisat2/archive/refs/heads/hisat-3n.tar.gz -o hisat2-hisat-3n.tar.gz && \
+    tar -xzvf hisat2-hisat-3n.tar.gz && cd hisat2-* && make -j$(nproc) && \
     strip hisat2-align-s hisat2-align-l hisat2-build-s hisat2-build-l && \
-    mv hisat-3n hisat2-align-s hisat2-align-l hisat-3n-build hisat2-build-s hisat2-build-l /usr/local/bin/
+    mv hisat-3n hisat2-align-s hisat2-align-l hisat-3n-build hisat2-build-s hisat2-build-l /usr/local/bin/ && \
+    cd .. && rm -rf hisat2*
 
 # --- Build & STRIP Falco ---
-COPY falco-1.2.3.tar.gz .
-RUN tar -xzvf falco-1.2.3.tar.gz && cd falco-* && ./configure && make -j$(nproc) && strip falco && mv falco /usr/local/bin/
+RUN curl -L --http1.1 --retry 5 https://github.com/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}.tar.gz -o falco.tar.gz && \
+    tar -xzvf falco.tar.gz && cd falco-* && ./configure && make -j$(nproc) && strip falco && \
+    mv falco /usr/local/bin/ && cd .. && rm -rf falco*
 
 # --- CLEANUP Python environments ---
 RUN find /opt -name "__pycache__" -type d -exec rm -rf {} + && \
