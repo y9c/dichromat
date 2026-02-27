@@ -1,6 +1,6 @@
 # dichromat
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.xxxxxxx.svg)](https://doi.org/10.5281/zenodo.xxxxxxx)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18803090.svg)](https://doi.org/10.5281/zenodo.18803090)
 
 `dichromat` is an ultra-fast, containerized pipeline for m6A eTAM-seq data analysis. It handles everything from competitive mapping to site-calling and aggregated reporting.
 
@@ -109,7 +109,7 @@ If you use dichromat in your research, please cite:
   title = {dichromat: An ultra-fast pipeline for m6A eTAM-seq data analysis},
   year = {2026},
   publisher = {Zenodo},
-  doi = {10.5281/zenodo.xxxxxxx},
+  doi = {10.5281/zenodo.18803090},
   url = {https://github.com/y9c/dichromat}
 }
 ```
