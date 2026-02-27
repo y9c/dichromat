@@ -12,12 +12,12 @@ This skill builds the container image using either:
 
 ```bash
 # Build using available method (auto-detect)
-python3 skills/dichromat-sif-builder/scripts/build_sif.py
+python3 development/skills/dichromat-sif-builder/scripts/build_sif.py
 
 # Or specify method explicitly
-python3 skills/dichromat-sif-builder/scripts/build_sif.py --method auto    # Default
-python3 skills/dichromat-sif-builder/scripts/build_sif.py --method local   # Local fakeroot
-python3 skills/dichromat-sif-builder/scripts/build_sif.py --method vm      # VM-based
+python3 development/skills/dichromat-sif-builder/scripts/build_sif.py --method auto    # Default
+python3 development/skills/dichromat-sif-builder/scripts/build_sif.py --method local   # Local fakeroot
+python3 development/skills/dichromat-sif-builder/scripts/build_sif.py --method vm      # VM-based
 ```
 
 ## Build Methods
@@ -31,7 +31,7 @@ Requires: `apptainer` with fakeroot support
 apptainer build --fakeroot test.sif docker://alpine:latest 2>/dev/null && echo "fakeroot OK"
 
 # Build locally
-bash skills/dichromat-sif-builder/scripts/build_local.sh
+bash development/skills/dichromat-sif-builder/scripts/build_local.sh
 ```
 
 **Output**: `dichromat.sif` in project root
@@ -42,7 +42,7 @@ Requires: SLURM access to VM nodes
 
 ```bash
 # Launch VM and build
-bash skills/dichromat-sif-builder/scripts/build_vm.sh
+bash development/skills/dichromat-sif-builder/scripts/build_vm.sh
 ```
 
 **Process**:
@@ -62,7 +62,7 @@ Add to your Makefile:
 
 ```makefile
 SIF_FILE := dichromat.sif
-BUILD_SCRIPT := skills/dichromat-sif-builder/scripts/build_sif.py
+BUILD_SCRIPT := development/skills/dichromat-sif-builder/scripts/build_sif.py
 
 # Auto-detect best build method
 sif:
@@ -106,7 +106,7 @@ Environment variables:
 ## Files
 
 ```
-skills/dichromat-sif-builder/
+development/skills/dichromat-sif-builder/
 ├── SKILL.md                 # This file
 ├── scripts/
 │   ├── build_sif.py         # Main entry point (auto-detect)

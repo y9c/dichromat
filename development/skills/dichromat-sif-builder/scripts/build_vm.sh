@@ -99,7 +99,7 @@ rsync -avz --progress \
     --exclude '*.log' \
     --exclude 'dichromat_LOG_*.txt' \
     --exclude '__pycache__' \
-    --exclude 'skills/' \
+    --exclude 'development/skills/' \
     . "ubuntu@$NODE:~/$BUILD_DIR/"
 
 if [ $? -ne 0 ]; then

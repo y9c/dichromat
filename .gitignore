@@ -11,8 +11,13 @@ etamseq.def
 .apptainer_cache/
 
 # Development and Local tools
-development/
 dichromat-vm-builder.skill
+
+# Development folder - specific ignores only
+# (skills/ is tracked, but other dev artifacts are ignored)
+development/build_sources/
+development/*-extracted/
+development/*.tmp
 
 # Snakemake work directories
 .snakemake/

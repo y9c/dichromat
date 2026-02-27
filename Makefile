@@ -62,12 +62,12 @@ help: ## Show this help message
 
 # Build SIF using skill (auto-detects best method: local fakeroot or VM)
 sif-skill: ## Build SIF using skill (auto-detect method)
-	python3 skills/dichromat-sif-builder/scripts/build_sif.py --method auto --output $(SIF_FILE)
+	python3 development/skills/dichromat-sif-builder/scripts/build_sif.py --method auto --output $(SIF_FILE)
 
 # Build SIF locally (requires fakeroot permission)
 sif-local: ## Build SIF locally with fakeroot
-	python3 skills/dichromat-sif-builder/scripts/build_sif.py --method local --output $(SIF_FILE)
+	python3 development/skills/dichromat-sif-builder/scripts/build_sif.py --method local --output $(SIF_FILE)
 
 # Build SIF using VM (no root/fakeroot required)
 sif-vm: ## Build SIF using temporary VM
-	python3 skills/dichromat-sif-builder/scripts/build_sif.py --method vm --output $(SIF_FILE)
+	python3 development/skills/dichromat-sif-builder/scripts/build_sif.py --method vm --output $(SIF_FILE)
