@@ -1,3 +1,7 @@
+# Default configurations for the dichromat pipeline
+# These paths are relative to the container filesystem
+
+container: "./dichromat.sif"
 # Test Batch Configuration
 batch: "dichromat_run"
 is_etam: true

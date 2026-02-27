@@ -1,5 +1,7 @@
 # dichromat
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.xxxxxxx.svg)](https://doi.org/10.5281/zenodo.xxxxxxx)
+
 `dichromat` is an ultra-fast, containerized pipeline for m6A eTAM-seq data analysis. It handles everything from competitive mapping to site-calling and aggregated reporting.
 
 ## 📋 Requirements
@@ -11,13 +13,57 @@ To run this pipeline, you need the following installed on your host system:
 ## 🚀 Quick Start
 
 ### 1. Get the Container
-The most straightforward way is to build the Apptainer image directly from GitHub Container Registry:
+
+**Option A: Build from GitHub Container Registry (recommended):**
 ```bash
 apptainer build dichromat.sif docker://ghcr.io/y9c/dichromat:latest
 ```
 
+**Option B: Download pre-built SIF from Zenodo:**
+
+<sub>*If you have networking issues accessing Docker Hub (especially in China), download the pre-built SIF directly:*</sub>
+```bash
+wget -O dichromat.sif "https://zenodo.org/records/18803090/files/dichromat.sif"
+```
+
 ### 2. Configure Your Run
-Edit `config.yaml` to specify your reference files and sample data. 
+
+Create a `config.yaml` with your references and samples (set `container` to your SIF path):
+
+<details>
+<summary>▼ Click to see the example configuration</summary>
+
+```yaml
+# Container image path
+container: "./dichromat.sif"
+
+# Reference files
+reference:
+  contamination:  # E.coli, etc. (optional)
+    - ~/ref/contamination.fa
+  genes:          # rRNA, tRNA, spike-ins for masking (optional)
+    - ~/ref/rRNA_tRNA.fa
+  genome:
+    fa: ~/ref/GRCh38.fa
+    gtf: ~/ref/GRCh38.gtf
+    hisat3n: ~/ref/GRCh38_hisat3n_index
+
+# Samples: paired-end (R1+R2) or single-end (R1 only)
+samples:
+  sample1:
+    data:
+      - R1: ~/data/sample1_R1.fq.gz
+        R2: ~/data/sample1_R2.fq.gz
+
+# Options
+is_etam: true              # eTAM analysis mode
+adapter: "AGATCGGA..."     # Custom adapter OR use libtype: "TAKARAV3"
+base_change: "A,G"         # m6A/GLORI: A,G  |  BS-seq: C,T
+```
+
+</details>
+
+See `default.yaml` for all available options. 
 
 ### 3. Run the Pipeline
 
@@ -52,6 +98,22 @@ In this mode, you run the container directly, which internally executes Snakemak
 *   `internal_files/`: Intermediate alignments and statistical summaries.
 
 ---
+
+## 📖 Citation
+
+If you use dichromat in your research, please cite:
+
+```bibtex
+@software{dichromat,
+  author = {Chang, Ye},
+  title = {dichromat: An ultra-fast pipeline for m6A eTAM-seq data analysis},
+  year = {2026},
+  publisher = {Zenodo},
+  doi = {10.5281/zenodo.xxxxxxx},
+  url = {https://github.com/y9c/dichromat}
+}
+```
+
 For detailed build and publishing instructions, see [DEVELOP.md](DEVELOP.md).
 
 Developed by **Ye Chang** (yech1990@gmail.com)
