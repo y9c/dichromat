@@ -38,6 +38,10 @@ def combined_function(x, a, b, c, d, e):
 
 
 def fit_motif(x_data, y_data):
+    # Check minimum data requirements
+    if len(x_data) < 5:
+        raise ValueError(f"Insufficient data points: {len(x_data)} (minimum 5)")
+    
     # Initial guesses for a, b in expected_m6A_level
     initial_guesses_m6A = [0.03, 10, 0.4]
     # Bounds for a, b to improve fitting
@@ -55,7 +59,7 @@ def fit_motif(x_data, y_data):
         y_data.filter(x_data < 0.5),
         p0=initial_guesses_m6A,
         bounds=bounds_m6A,
-        maxfev=20_000,
+        maxfev=5_000,  # Reduced from 20_000
     )
 
     # Calculate residuals for unconverted rate fitting
@@ -69,7 +73,7 @@ def fit_motif(x_data, y_data):
         y_residual,
         p0=initial_guesses_unconverted,
         bounds=bounds_unconverted,
-        maxfev=20_000,
+        maxfev=5_000,  # Reduced from 20_000
     )
 
     # Use initial fits as prior to fit the combined function again
@@ -84,7 +88,7 @@ def fit_motif(x_data, y_data):
         y_data,
         p0=combined_initial_guess,
         bounds=bounds_combined,
-        maxfev=40_000,
+        maxfev=10_000,  # Reduced from 40_000
     )
 
     return params_combined
@@ -129,12 +133,19 @@ def calculate_background_fitting(df_sites, libraries):
             df2 = df2.sort("GC").select("GC", "Ratio", "Count")
             x, y, z = df2["GC"], df2["Ratio"], df2["Count"]
             library2background[library][m] = (x, y, z)
+            
+            # Skip fitting if insufficient unique data points
+            if len(x) < 5:
+                logging.info(f"    Skipping fit for motif {m}: only {len(x)} unique GC values (need >= 5)")
+                library2gcfit[library][m] = [0.0001, 8, 0.03, 10, 0.4]  # Fallback
+                continue
+            
             try:
                 library2gcfit[library][m] = fit_motif(
                     pl.Series(x.to_list()), pl.Series(y.to_list())
                 )
             except Exception as e:
-                logging.warning(f"Failed to fit motif {m} for {library}: {e}")
+                logging.warning(f"    Failed to fit motif {m} for {library}: {e}")
                 library2gcfit[library][m] = [0.0001, 8, 0.03, 10, 0.4] # Fallback to some defaults if fit fails
 
     return library2background, library2gcfit
