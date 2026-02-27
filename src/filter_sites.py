@@ -103,6 +103,26 @@ def _fit_motif_worker(args):
     try:
         if len(x_list) < 5:
             return (motif, None, f"insufficient data ({len(x_list)} < 5)")
+        
+        # Check for sufficient variation in data
+        y_array = np.array(y_list)
+        y_min, y_max = np.min(y_array), np.max(y_array)
+        y_range = y_max - y_min
+        y_mean = np.mean(y_array)
+        
+        # Skip if all values are the same (no variance)
+        if y_range < 1e-10:
+            return (motif, None, f"no variance in data (all values ≈ {y_mean:.4f})")
+        
+        # Skip if range is too small relative to mean (< 5% variation)
+        if y_mean > 0 and y_range / y_mean < 0.05:
+            return (motif, None, f"insufficient variation (range/mean = {y_range/y_mean:.4f} < 0.05)")
+        
+        # Skip if too few unique GC values
+        x_unique = len(set(x_list))
+        if x_unique < 3:
+            return (motif, None, f"insufficient unique GC values ({x_unique} < 3)")
+        
         result = fit_motif(pl.Series(x_list), pl.Series(y_list))
         return (motif, result, None)
     except Exception as e:
