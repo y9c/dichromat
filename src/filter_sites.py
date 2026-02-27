@@ -178,12 +178,26 @@ if __name__ == "__main__":
     output_file = args.output
 
     logging.info("Reading input file")
+    
+    # First, peek at the file to get column names for schema overrides
+    df_test = pl.read_csv(input_file, separator="\t", has_header=True, n_rows=5)
+    
+    # Build schema overrides - ensure Depth_* and Uncon_* columns are numeric
+    schema_overrides = {"Chrom": pl.Utf8, "GenePos": pl.Utf8, "GeneName": pl.Utf8}
+    for col in df_test.columns:
+        if col.startswith("Depth_") or col.startswith("Uncon_"):
+            schema_overrides[col] = pl.Int64
+    
+    # Get list of numeric columns to cast
+    numeric_cols = [col for col in df_test.columns 
+                   if col.startswith("Depth_") or col.startswith("Uncon_")]
+    
     df_sites = (
         pl.scan_csv(
             input_file,
             separator="\t",
             has_header=True,
-            schema_overrides={"Chrom": pl.Utf8, "GenePos": pl.Utf8, "GeneName": pl.Utf8},
+            schema_overrides=schema_overrides,
         )
         .with_columns(
             Motif3=pl.col("Motif")
@@ -204,6 +218,12 @@ if __name__ == "__main__":
         .filter((pl.col("Strand") != ".") & ~(pl.col("Motif3").str.contains("N")))
         .collect()
     )
+    
+    # Explicitly cast numeric columns to ensure correct types (handles empty files)
+    if numeric_cols:
+        df_sites = df_sites.with_columns([
+            pl.col(col).cast(pl.Int64) for col in numeric_cols if col in df_sites.columns
+        ])
 
     _samples_with_fto = list(
         set(
@@ -227,7 +247,19 @@ if __name__ == "__main__":
         ).drop(pl.selectors.contains("-p-") & pl.selectors.starts_with("Depth_", "Uncon_"))
 
     libraries = [c.removeprefix("Depth_") for c in df_sites.columns if "Depth_" in c]
+    
+    if not libraries:
+        logging.warning("No Depth_* columns found in input file. Cannot process sites.")
+        # Write empty output with header
+        pl.DataFrame().write_csv(output_file, separator="\t")
+        exit(0)
+    
+    if len(df_sites) == 0:
+        logging.warning("Input file has no data rows. Writing empty output.")
+        pl.DataFrame().write_csv(output_file, separator="\t")
+        exit(0)
 
+    logging.info(f"Processing {len(df_sites)} sites for libraries: {libraries}")
     logging.info("Calculating background and fitting")
     library2background, library2gcfit = calculate_background_fitting(df_sites, libraries)
     

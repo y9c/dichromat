@@ -102,6 +102,10 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY ./Snakefile ./default.yaml ./entrypoint ./VERSION ${PIPELINE_HOME}/
 COPY ./src/ ${PIPELINE_HOME}/src/
 
+# Install src scripts to PATH
+RUN chmod +x ${PIPELINE_HOME}/src/*.py && \
+    ln -s ${PIPELINE_HOME}/src/*.py /usr/local/bin/
+
 WORKDIR /workspace
 RUN chmod +x ${PIPELINE_HOME}/entrypoint
 ENTRYPOINT ["/pipeline/entrypoint"]

@@ -1,5 +1,6 @@
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 import os
 import yaml
 
@@ -46,25 +47,42 @@ if config.get("container") or INSIDE_CONTAINER:
         config["path"] = clean_defaults.get("path", {})
 
 
-workdir: f"workspace_{BATCH}"
+# Resolve container path to absolute if relative
+CONTAINER = config.get("container")
+if CONTAINER and not os.path.isabs(CONTAINER):
+    CONTAINER = os.path.normpath(os.path.join(workflow.basedir, CONTAINER))
 
 # Container directive for rules
 # If already inside the container, we MUST set this to None to avoid nesting
-container: None if INSIDE_CONTAINER else config.get("container")
+container: None if INSIDE_CONTAINER else CONTAINER
 
 
 
 REF = config.get("reference", {})
-# Expand user paths in REF dictionary
+# Expand user paths and resolve relative paths in REF dictionary
 for ref_type in REF:
     if isinstance(REF[ref_type], dict):
         for key, val in REF[ref_type].items():
             if isinstance(val, str):
-                REF[ref_type][key] = os.path.expanduser(val)
+                # Expand user (~) and resolve relative paths
+                val = os.path.expanduser(val)
+                if not os.path.isabs(val):
+                    val = os.path.normpath(os.path.join(workflow.basedir, val))
+                REF[ref_type][key] = val
     elif isinstance(REF[ref_type], list):
-        REF[ref_type] = [os.path.expanduser(f) if isinstance(f, str) else f for f in REF[ref_type]]
+        resolved_list = []
+        for f in REF[ref_type]:
+            if isinstance(f, str):
+                f = os.path.expanduser(f)
+                if not os.path.isabs(f):
+                    f = os.path.normpath(os.path.join(workflow.basedir, f))
+            resolved_list.append(f)
+        REF[ref_type] = resolved_list
     elif isinstance(REF[ref_type], str):
-        REF[ref_type] = os.path.expanduser(REF[ref_type])
+        val = os.path.expanduser(REF[ref_type])
+        if not os.path.isabs(val):
+            val = os.path.normpath(os.path.join(workflow.basedir, val))
+        REF[ref_type] = val
 
 
 TEMPDIR = Path(
@@ -72,7 +90,8 @@ TEMPDIR = Path(
         config.get("tempdir", os.path.join(workflow.basedir, ".tmp")), workflow.basedir
     )
 )
-PATH = config.get("path", {})
+# Convert PATH dict to SimpleNamespace for dot notation access (e.g., PATH.python instead of PATH['python'])
+PATH = SimpleNamespace(**config.get("path", {}))
 
 INTERNALDIR = Path("internal_files")
 MARKDUP = config.get("markdup", True)
@@ -125,7 +144,6 @@ def get_lib_subdir(sample, rn):
     return "PE" if is_pe(sample, rn) else "SE"
 
 
-SRCDIR = Path(workflow.basedir) / "src"
 
 
 rule all:
@@ -143,14 +161,15 @@ rule all:
 
 rule combine_contamination_fa:
     input:
-        [os.path.expanduser(f) for f in config.get("contamination", [])],
+        REF.get("contamination", []) if "contamination" in REF else [],
     output:
         fa=INTERNALDIR / "ref/contamination.fa",
         fai=INTERNALDIR / "ref/contamination.fa.fai",
     shell:
         """
+        mkdir -p $(dirname {output.fa})
         cat {input} > {output.fa}
-        {PATH[samtools]} faidx {output.fa} --fai-idx {output.fai}
+        {PATH.samtools} faidx {output.fa} --fai-idx {output.fai}
         """
 
 
@@ -166,32 +185,34 @@ rule build_contamination_hisat3n_index:
     shell:
         """
         rm -f {params.prefix}*.ht2
-        {PATH[hisat3nbuild]} -p {threads} --base-change {params.basechange} {input} {params.prefix}
+        {PATH.hisat3nbuild} -p {threads} --base-change {params.basechange} {input} {params.prefix}
         """
 
 
 rule combine_genes_fa:
     input:
-        [os.path.expanduser(f) for f in config.get("genes", [])],
+        REF.get("genes", []) if "genes" in REF else [],
     output:
         fa=INTERNALDIR / "ref/genes.fa",
         fai=INTERNALDIR / "ref/genes.fa.fai",
     shell:
         """
+        mkdir -p $(dirname {output.fa})
         cat {input} > {output.fa}
-        {PATH[samtools]} faidx {output.fa} --fai-idx {output.fai}
+        {PATH.samtools} faidx {output.fa} --fai-idx {output.fai}
         """
 
 
 rule prepared_transcript_ref:
     input:
-        fa=os.path.expanduser(REF["genome"]["fa"]),
-        gtf=os.path.expanduser(REF["genome"]["gtf"]),
+        fa=REF["genome"]["fa"],
+        gtf=REF["genome"]["gtf"],
     output:
         info=INTERNALDIR / "ref/transcript.tsv",
         seq=INTERNALDIR / "ref/transcript.fa",
     shell:
         """
+        mkdir -p $(dirname {output.info})
         coralsnake prepare -g {input.gtf} -f {input.fa} -o {output.info} -s {output.seq} -c -n -x -t -z
         """
 
@@ -216,7 +237,7 @@ rule trim_se:
     threads: 24
     shell:
         """
-        {PATH[cutseq]} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -s {output.s} --json-file {output.report} {input} 
+        {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -s {output.s} --json-file {output.report} {input} 
         """
 
 
@@ -240,7 +261,7 @@ rule trim_pe:
     threads: 24
     shell:
         """
-        {PATH[cutseq]} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} -p {output.c2} -s {output.s1} -S {output.s2} --json-file {output.report} {input.r1} {input.r2}
+        {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} -p {output.c2} -s {output.s1} -S {output.s2} --json-file {output.report} {input.r1} {input.r2}
         """
 
 
@@ -289,7 +310,7 @@ rule qc_trimmed:
         lambda wildcards: INTERNALDIR
         / f"qc/fastqc/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
     shell:
-        "{PATH[falco]} -o {params} {input}"
+        "{PATH.falco} -o {params} {input}"
 
 
 rule report_qc_trimmed:
@@ -303,7 +324,7 @@ rule report_qc_trimmed:
     output:
         "report_reads/trimmed.html",
     shell:
-        "multiqc -f -m fastqc -n {output} {input}"
+        "{PATH.multiqc} -f -m fastqc -n {output} {input}"
 
 
 # premap to contamination
@@ -334,9 +355,9 @@ rule premap_align_pe:
     threads: 36
     shell:
         """
-        {PATH[hisat3n]} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.directional} {params.splice_args} \
             --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
-            {PATH[samtools]} view -@ {threads} -e 'flag.proper_pair && !flag.unmap && !flag.munmap && qlen-sclen >= 30 && [XM] * 15 < (qlen-sclen)' -O BAM -U {output.unmapped} -o {output.mapped}
+            {PATH.samtools} view -@ {threads} -e 'flag.proper_pair && !flag.unmap && !flag.munmap && qlen-sclen >= 30 && [XM] * 15 < (qlen-sclen)' -O BAM -U {output.unmapped} -o {output.mapped}
         """
 
 
@@ -364,9 +385,9 @@ rule premap_align_se:
     threads: 36
     shell:
         """
-        {PATH[hisat3n]} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.directional} {params.splice_args} \
             --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
-            {PATH[samtools]} view -@ {threads} -e '!flag.unmap && qlen-sclen >= 30 && [XM] * 15 < qlen-sclen' -O BAM -U {output.unmapped} -o {output.mapped}
+            {PATH.samtools} view -@ {threads} -e '!flag.unmap && qlen-sclen >= 30 && [XM] * 15 < qlen-sclen' -O BAM -U {output.unmapped} -o {output.mapped}
         """
 
 
@@ -390,7 +411,7 @@ rule premap_fixmate_pe:
         temp(TEMPDIR / "premap/PE/{sample}_{rn}.fixmate.bam"),
     threads: 8
     shell:
-        "{PATH[samtools]} fixmate -@ {threads} -m -O BAM {input} {output}"
+        "{PATH.samtools} fixmate -@ {threads} -m -O BAM {input} {output}"
 
 
 rule premap_fixmate_se:
@@ -415,7 +436,7 @@ rule finalize_premap_bam:
     threads: 36
     priority: 4
     shell:
-        "{PATH[samtools]} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
+        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
 rule premap_get_unmapped_pe:
@@ -426,7 +447,7 @@ rule premap_get_unmapped_pe:
         r2=temp(TEMPDIR / "unmapped/premap/PE/{sample}_{rn}_R2.fq.gz"),
     shell:
         """
-        {PATH[samtools]} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
+        {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
         """
 
 
@@ -437,7 +458,7 @@ rule premap_get_unmapped_se:
         r1=temp(TEMPDIR / "unmapped/premap/SE/{sample}_{rn}_R1.fq.gz"),
     shell:
         """
-        {PATH[samtools]} fastq -0 {output.r1} -n {input}
+        {PATH.samtools} fastq -0 {output.r1} -n {input}
         """
 
 
@@ -465,7 +486,7 @@ rule mainmap_align_pe:
         **({"mp1": temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.genes.bam")} if HAS_GENES else {})
     threads: 48
     shell:
-        "coralsnake map -t {threads} "
+        "{PATH.coralsnake} map -t {threads} "
         + ("-r {input.rf1} " if HAS_GENES else "")
         + "-r {input.rf2} -1 {input.fq1} -2 {input.fq2} "
         + ("-o {output.mp1} " if HAS_GENES else "")
@@ -489,7 +510,7 @@ rule mainmap_align_se:
         **({"mp1": temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.genes.bam")} if HAS_GENES else {})
     threads: 48
     shell:
-        "coralsnake map -t {threads} "
+        "{PATH.coralsnake} map -t {threads} "
         + ("-r {input.rf1} " if HAS_GENES else "")
         + "-r {input.rf2} -1 {input.fq} "
         + ("-o {output.mp1} " if HAS_GENES else "")
@@ -521,7 +542,7 @@ if HAS_GENES:
             INTERNALDIR / "run_bam/{sample}_{rn}.genes.bam",
         threads: 32
         shell:
-            "{PATH[samtools]} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
+            "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
 rule finalize_mainmap_transcript_bam:
@@ -534,7 +555,7 @@ rule finalize_mainmap_transcript_bam:
         INTERNALDIR / "run_bam/{sample}_{rn}.transcript.bam",
     threads: 32
     shell:
-        "{PATH[samtools]} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
+        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
 rule mainmap_get_unmapped_pe:
@@ -545,7 +566,7 @@ rule mainmap_get_unmapped_pe:
         r2=temp(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz"),
     shell:
         """
-        {PATH[samtools]} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
+        {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
         """
 
 
@@ -556,7 +577,7 @@ rule mainmap_get_unmapped_se:
         r1=temp(TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz"),
     shell:
         """
-        {PATH[samtools]} fastq -0 {output.r1} -n {input}
+        {PATH.samtools} fastq -0 {output.r1} -n {input}
         """
 
 
@@ -586,9 +607,9 @@ rule remap_align_pe:
     threads: 36
     shell:
         """
-        {PATH[hisat3n]} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH[samtools]} view -@ {threads} -O BAM -o {output.bam}
+            {PATH.samtools} view -@ {threads} -O BAM -o {output.bam}
         """
 
 
@@ -614,9 +635,9 @@ rule remap_align_se:
     threads: 36
     shell:
         """
-        {PATH[hisat3n]} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH[samtools]} view -@ {threads} -o {output.bam}
+            {PATH.samtools} view -@ {threads} -o {output.bam}
         """
 
 
@@ -640,7 +661,7 @@ rule remap_fixmate_pe:
         temp(TEMPDIR / "remap/PE/{sample}_{rn}.fixmate.bam"),
     threads: 8
     shell:
-        "{PATH[samtools]} fixmate -@ {threads} -m -O BAM {input} {output}"
+        "{PATH.samtools} fixmate -@ {threads} -m -O BAM {input} {output}"
 
 
 rule remap_fixmate_se:
@@ -664,7 +685,7 @@ rule remap_tag_pe:
         ),
     threads: 32
     shell:
-        "{PATH[python]} {SRCDIR}/bam_tag.py {input} {output} --threads {threads} --strand-type {params.strand}"
+        "{PATH.bam_tag} {input} {output} --threads {threads} --strand-type {params.strand}"
 
 
 rule remap_tag_se:
@@ -678,7 +699,7 @@ rule remap_tag_se:
         ),
     threads: 32
     shell:
-        "{PATH[python]} {SRCDIR}/bam_tag.py {input} {output} --threads {threads} --strand-type {params.strand}"
+        "{PATH.bam_tag} {input} {output} --threads {threads} --strand-type {params.strand}"
 
 
 rule remap_filter_sort_pe:
@@ -691,8 +712,8 @@ rule remap_filter_sort_pe:
     threads: 32
     shell:
         """
-        {PATH[samtools]} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmap} --save-counts {output.report} -h {input} |\
-            {PATH[samtools]} sort -@ {threads} -m 3G -O BAM -o {output.mapped}
+        {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmap} --save-counts {output.report} -h {input} |\
+            {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.mapped}
         """
 
 
@@ -706,8 +727,8 @@ rule remap_filter_sort_se:
     threads: 32
     shell:
         """
-        {PATH[samtools]} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmap} --save-counts {output.report} -h {input} |\
-            {PATH[samtools]} sort -@ {threads} -m 3G -O BAM -o {output.mapped}
+        {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmap} --save-counts {output.report} -h {input} |\
+            {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.mapped}
         """
 
 
@@ -745,7 +766,7 @@ rule remap_get_unmapped_pe:
         r2=temp(TEMPDIR / "unmapped/remap/PE/{sample}_{rn}_R2.fq.gz"),
     shell:
         """
-        {PATH[samtools]} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
+        {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
         """
 
 
@@ -756,7 +777,7 @@ rule remap_get_unmapped_se:
         r1=temp(TEMPDIR / "unmapped/remap/SE/{sample}_{rn}_R1.fq.gz"),
     shell:
         """
-        {PATH[samtools]} fastq -0 {output.r1} -n {input}
+        {PATH.samtools} fastq -0 {output.r1} -n {input}
         """
 
 
@@ -786,7 +807,7 @@ rule unmapped_qc:
         lambda wildcards: INTERNALDIR
         / f"qc/fastqc/unmapped/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
     shell:
-        "{PATH[falco]} -o {params} {input}"
+        "{PATH.falco} -o {params} {input}"
 
 
 rule unmapped_report:
@@ -801,7 +822,7 @@ rule unmapped_report:
     output:
         "report_reads/unmapped.html",
     shell:
-        "multiqc -f -m fastqc -n {output} {input}"
+        "{PATH.multiqc} -f -m fastqc -n {output} {input}"
 
 
 #######################
@@ -821,7 +842,7 @@ rule combine_bams:
     threads: 32
     shell:
         """
-        {PATH[samtools]} merge -@ {threads} -f --write-index -o {output.bam}##idx##{output.bai} {input}
+        {PATH.samtools} merge -@ {threads} -f --write-index -o {output.bam}##idx##{output.bai} {input}
         """
 
 
@@ -834,8 +855,8 @@ rule stat_combined:
     threads: 4
     shell:
         """
-        {PATH[samtools]} flagstat -@ {threads} -O TSV {input} > {output.stat}
-        {PATH[samtools]} view -@ {threads} -c -F 384 {input} > {output.n}
+        {PATH.samtools} flagstat -@ {threads} -O TSV {input} > {output.stat}
+        {PATH.samtools} view -@ {threads} -c -F 384 {input} > {output.n}
         """
 
 
@@ -848,7 +869,7 @@ rule drop_duplicates:
         txt=INTERNALDIR / "stat/dedup/{sample}.{reftype}.log",
     threads: 48
     shell:
-        "{PATH[markdup]} -t {threads} -i {input.bam} -o {output.bam} --report {output.txt}"
+        "{PATH.markdup} -t {threads} -i {input.bam} -o {output.bam} --report {output.txt}"
 
 
 rule dedup_index:
@@ -858,7 +879,7 @@ rule dedup_index:
         bai=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam.bai",
     threads: 12
     shell:
-        "{PATH[samtools]} index -@ {threads} {input}"
+        "{PATH.samtools} index -@ {threads} {input}"
 
 
 rule stat_dedup:
@@ -870,8 +891,8 @@ rule stat_dedup:
     threads: 4
     shell:
         """
-        {PATH[samtools]} flagstat -@ {threads} -O TSV {input} > {output.stat}
-        {PATH[samtools]} view -@ {threads} -c -F 384 {input} > {output.n}
+        {PATH.samtools} flagstat -@ {threads} -O TSV {input} > {output.stat}
+        {PATH.samtools} view -@ {threads} -c -F 384 {input} > {output.n}
         """
 
 
@@ -889,7 +910,7 @@ rule liftover_transcript_to_genome:
     shell:
         """
         coralsnake liftover -t {threads} -i {input.transcripts} -o {output.transcripts} -a {input.info} -f {params.fai}
-        {PATH[samtools]} cat {output.transcripts} {input.genome} | {PATH[samtools]} sort -@ {threads} -m 3G -O BAM -o {output.bam}
+        {PATH.samtools} cat {output.transcripts} {input.genome} | {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam}
         """
 
 
@@ -949,7 +970,7 @@ rule insert_size:
     threads: 8
     shell:
         """
-        {PATH[samtools]} stats -@ {threads} -i 1000 {input} |grep ^IS|cut -f 2- > {output}
+        {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^IS|cut -f 2- > {output}
         """
 
 
@@ -961,7 +982,7 @@ rule read_length:
     threads: 8
     shell:
         """
-        {PATH[samtools]} stats -@ {threads} -i 1000 {input} |grep ^RL | cut -f 2- > {output}
+        {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^RL | cut -f 2- > {output}
         """
 
 
@@ -985,7 +1006,7 @@ if HAS_GENES:
         threads: 8
         shell:
             """
-            {PATH[python]} {SRCDIR}/bam_conv.py {input.bam} > {output}
+            {PATH.bam_conv} {input.bam} > {output}
             """
 
 
@@ -999,7 +1020,7 @@ rule run_countmut:
             else (
                 INTERNALDIR / "ref/genes.fa"
                 if wildcards.reftype == "genes"
-                else os.path.expanduser(REF["genome"]["fa"])
+                else REF["genome"]["fa"]
             )
         ),
     output:
@@ -1009,7 +1030,7 @@ rule run_countmut:
         ref_base=lambda wildcards: "C" if config.get("pileup_ct", False) else "A",
         mut_base=lambda wildcards: "T" if config.get("pileup_ct", False) else "G",
     shell:
-        "countmut -i {input.bam} -r {input.ref} -o {output} -t {threads} --ref-base {params.ref_base} --mut-base {params.mut_base} -f > /dev/null"
+        "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} --ref-base {params.ref_base} --mut-base {params.mut_base} -f > /dev/null"
 
 
 rule pileup_base:
@@ -1019,7 +1040,7 @@ rule pileup_base:
         INTERNALDIR / "pileup/{sample}.{reftype}.tsv.gz",
     threads: 16
     shell:
-        "{PATH[bgzip]} -@ {threads} -c {input} > {output}"
+        "{PATH.bgzip} -@ {threads} -c {input} > {output}"
 
 
 rule unfilter_genes_stat:
@@ -1065,7 +1086,7 @@ rule join_pileup_table:
     threads: lambda wildcards, input: min(int(len(input) * 4), 64)
     shell:
         """
-        {PATH[python]} {SRCDIR}/merge_samples.py --files {input} --names {params.samples} --output {output} --requires {params.requires}
+        {PATH.merge_samples} --files {input} --names {params.samples} --output {output} --requires {params.requires}
         """
 
 
@@ -1079,7 +1100,7 @@ rule merge_gene_and_genome_table:
     threads: 48
     shell:
         """
-        {PATH[python]} {SRCDIR}/remap_genome.py -t {input.info} -a {input.transcripts} -b {input.genome} -o {output}
+        {PATH.remap_genome} -t {input.info} -a {input.transcripts} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
         """
 
 
@@ -1091,7 +1112,7 @@ rule filter_eTAM_sites:
     threads: 48
     shell:
         """
-        {PATH[python]} {SRCDIR}/filter_sites.py -i {input} -o {output.fl}
+        {PATH.filter_sites} -i {input} -o {output.fl}
         """
 
 
@@ -1105,7 +1126,7 @@ rule group_and_pval_cal:
     threads: 24
     shell:
         """
-        {PATH[python]} {SRCDIR}/sum_groups.py -i {input} -o {output} -n {params.names}
+        {PATH.sum_groups} -i {input} -o {output} -n {params.names}
         """
 
 
@@ -1128,8 +1149,8 @@ rule aggregate_multiqc_stats:
         motifs=INTERNALDIR / "stat/multiqc/motif_conversion_mqc.tsv",
     shell:
         """
-        {PATH[python]} {SRCDIR}/mqc_mapping.py {output.mapping} {input.counts}
-        {PATH[python]} {SRCDIR}/mqc_motif.py {output.motifs} {input.motifs}
+        {PATH.mqc_mapping} {output.mapping} {input.counts}
+        {PATH.mqc_motif} {output.motifs} {input.motifs}
         """
 
 
@@ -1149,7 +1170,7 @@ rule generate_mapping_report:
         search_dir=str(INTERNALDIR / "stat/multiqc"),
         trim_dir=str(INTERNALDIR / "qc/trimming"),
     shell:
-        "multiqc -f -n {params.report_name} -o {params.report_dir} {params.search_dir} {params.trim_dir}"
+        "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir} {params.trim_dir}"
 
 
 rule generate_site_report:
@@ -1162,4 +1183,4 @@ rule generate_site_report:
         report_dir=str(Path("report_sites")),
         search_dir=str(INTERNALDIR / "stat/multiqc"),
     shell:
-        "multiqc -f -n {params.report_name} -o {params.report_dir} {params.search_dir}"
+        "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir}"

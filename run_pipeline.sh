@@ -6,6 +6,7 @@
 
 # Default parameters
 BATCH="dichromat_run"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="config.yaml"
 JOBS=100
 PROFILE="slurm_changye"
@@ -49,6 +50,7 @@ if [ "$UNLOCK" = true ]; then
     echo "🔓 Unlocking pipeline for batch: $BATCH"
     snakemake --configfile "$CONFIG" \
               -s Snakefile \
+              --directory "${PROJECT_DIR}/workspace_${BATCH}" \
               --config batch="$BATCH" \
               --unlock
     exit $?
@@ -63,11 +65,13 @@ printf "\033[0;33m Analyzing...\033[0m"
 snakemake --configfile "$CONFIG" \
           -p --rerun-incomplete \
           -s Snakefile \
+          --directory "${PROJECT_DIR}/workspace_${BATCH}" \
           --config batch="$BATCH" \
           -j "$JOBS" \
           --profile "$PROFILE" \
           --use-apptainer \
-          --apptainer-args "--bind /data:/data" \
+          --apptainer-args "-B /data -B ${PROJECT_DIR}" \
+          --latency-wait 60 \
           "$@" > "${LOGFILE}" 2>&1
 
 if [ $? -eq 0 ]; then

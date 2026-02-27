@@ -90,7 +90,6 @@ In this mode, you run the container directly, which internally executes Snakemak
 ## 📊 Key Features
 *   **Competitive Mapping**: Simultaneously align to transcriptome and masking references (rRNA, spike-ins).
 *   **Fast Mutation Counting**: Uses `countmut` for ultra-fast, strand-aware processing.
-*   **Unified Dashboards**: Generates MultiQC reports for mapping (`report_reads/mapping.html`) and site-calling (`report_sites/motif.html`).
 
 ## 📁 Output Structure
 *   `report_reads/`: Mapping statistics and read-level QC dashboards.
@@ -98,21 +97,6 @@ In this mode, you run the container directly, which internally executes Snakemak
 *   `internal_files/`: Intermediate alignments and statistical summaries.
 
 ---
-
-## 📖 Citation
-
-If you use dichromat in your research, please cite:
-
-```bibtex
-@software{dichromat,
-  author = {Chang, Ye},
-  title = {dichromat: An ultra-fast pipeline for m6A eTAM-seq data analysis},
-  year = {2026},
-  publisher = {Zenodo},
-  doi = {10.5281/zenodo.18803090},
-  url = {https://github.com/y9c/dichromat}
-}
-```
 
 For detailed build and publishing instructions, see [DEVELOP.md](DEVELOP.md).
 

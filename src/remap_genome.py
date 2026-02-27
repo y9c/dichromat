@@ -94,6 +94,20 @@ def remap_and_join_files(
     
     # Vectorized mapping using a join
     logging.info("Vectorized liftover to genomic coordinates")
+    
+    # Check for unmapped genes (gene IDs not in reference)
+    unmatched_count = df1.join(
+        exons_df.select("GeneName").unique(), 
+        on="GeneName", 
+        how="anti"
+    ).shape[0]
+    if unmatched_count > 0:
+        logging.warning(
+            f"{unmatched_count} transcript positions have GeneName not found in "
+            f"reference file. These will be kept as-is (GeneName used as Chrom). "
+            f"This may indicate a mismatch between annotation versions."
+        )
+    
     df1 = (
         df1.join(exons_df, on="GeneName", how="left")
         .filter(
@@ -109,7 +123,7 @@ def remap_and_join_files(
             .then(pl.col("g_start") + pl.col("offset"))
             .when(pl.col("Strand") == "-")
             .then(pl.col("g_end") - pl.col("offset") - 1)
-            .otherwise(pl.col("GenePos_0based")) # Fallback
+            .otherwise(pl.col("GenePos_0based"))  # Fallback for unmapped
         )
         .with_columns(
             Chrom=pl.col("Chrom").fill_null(pl.col("GeneName")),
@@ -131,6 +145,12 @@ def remap_and_join_files(
     )
     
     logging.info(f"Loaded and mapped {len(df1)} transcript positions.")
+    
+    if len(df1) == 0:
+        logging.warning(
+            "No transcript positions could be mapped to genomic coordinates. "
+            "Output will contain only genome positions."
+        )
 
     # Read genome df
     df2 = pl.scan_csv(
@@ -189,12 +209,15 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--transcript-file", type=str)
-    parser.add_argument("-a", "--gene-file", type=str)
-    parser.add_argument("-b", "--genome-file", type=str)
-    parser.add_argument("-o", "--output-file", type=str)
+    parser.add_argument("-t", "--transcript-file", type=str, required=True)
+    parser.add_argument("-a", "--gene-file", type=str, required=True)
+    parser.add_argument("-b", "--genome-file", type=str, required=True)
+    parser.add_argument("-o", "--output-file", type=str, required=True)
+    parser.add_argument("--min-depth", type=int, default=5, 
+                        help="Minimum total depth across all libraries (default: 5)")
     args = parser.parse_args()
 
     df = remap_and_join_files(
-        args.gene_file, args.genome_file, args.transcript_file, args.output_file
+        args.gene_file, args.genome_file, args.transcript_file, args.output_file,
+        min_depth=args.min_depth
     )
