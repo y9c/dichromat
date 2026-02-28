@@ -91,22 +91,42 @@ SNAKEMAKE_CMD="snakemake --configfile $CONFIG \
           --latency-wait 60"
 
 # Add benchmarking if enabled
+MONITOR_PID=""
 if [ "$BENCH" = true ]; then
     SNAKEMAKE_CMD="$SNAKEMAKE_CMD --benchmark-extended"
+    
+    # Start resource monitor in background
+    echo -e "\033[0;34mStarting real-time resource monitor...\033[0m"
+    python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
+    MONITOR_PID=$!
 fi
 
 # Run Snakemake and capture output
 eval $SNAKEMAKE_CMD "$@" > "${LOGFILE}" 2>&1
+
+# Stop resource monitor if running
+if [ -n "$MONITOR_PID" ]; then
+    kill $MONITOR_PID 2>/dev/null || true
+    wait $MONITOR_PID 2>/dev/null || true
+fi
 
 EXIT_CODE=$?
 cleanup_status $EXIT_CODE
 
 # Generate benchmark report if enabled and benchmarks exist
 if [ "$BENCH" = true ]; then
+    # Show real-time resource summary
+    if [ -f "${LOGFILE}.resources" ]; then
+        echo ""
+        echo -e "\033[0;34mReal-time Resource Summary:\033[0m"
+        tail -20 "${LOGFILE}.resources"
+    fi
+    
+    # Show benchmark report
     BENCHMARK_DIR="${PROJECT_DIR}/workspace_${BATCH}/.snakemake/benchmarks"
     if [ -d "$BENCHMARK_DIR" ] && [ "$(ls -A $BENCHMARK_DIR/*.benchmark.txt 2>/dev/null)" ]; then
         echo ""
-        echo -e "\033[0;34mGenerating benchmark report...\033[0m"
+        echo -e "\033[0;34mBenchmark Report:\033[0m"
         python "${PROJECT_DIR}/development/analyze_benchmarks.py" "$BENCHMARK_DIR" 2>/dev/null || true
     fi
 fi
