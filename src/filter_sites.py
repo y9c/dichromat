@@ -8,11 +8,8 @@
 
 import argparse
 import logging
-import multiprocessing as mp
-import os
 import pickle
 from collections import defaultdict
-from functools import partial
 
 import numpy as np
 import polars as pl
@@ -97,39 +94,7 @@ def fit_motif(x_data, y_data):
     return params_combined
 
 
-def _fit_motif_worker(args):
-    """Worker function for parallel motif fitting."""
-    motif, x_list, y_list = args
-    try:
-        if len(x_list) < 5:
-            return (motif, None, f"insufficient data ({len(x_list)} < 5)")
-        
-        # Check for sufficient variation in data
-        y_array = np.array(y_list)
-        y_min, y_max = np.min(y_array), np.max(y_array)
-        y_range = y_max - y_min
-        y_mean = np.mean(y_array)
-        
-        # Skip if all values are the same (no variance)
-        if y_range < 1e-10:
-            return (motif, None, f"no variance in data (all values ≈ {y_mean:.4f})")
-        
-        # Skip if range is too small relative to mean (< 5% variation)
-        if y_mean > 0 and y_range / y_mean < 0.05:
-            return (motif, None, f"insufficient variation (range/mean = {y_range/y_mean:.4f} < 0.05)")
-        
-        # Skip if too few unique GC values
-        x_unique = len(set(x_list))
-        if x_unique < 3:
-            return (motif, None, f"insufficient unique GC values ({x_unique} < 3)")
-        
-        result = fit_motif(pl.Series(x_list), pl.Series(y_list))
-        return (motif, result, None)
-    except Exception as e:
-        return (motif, None, str(e))
-
-
-def calculate_background_fitting(df_sites, libraries, n_threads=None):
+def calculate_background_fitting(df_sites, libraries):
     library2background = defaultdict(dict)
     library2gcfit = defaultdict(dict)
 
@@ -164,36 +129,43 @@ def calculate_background_fitting(df_sites, libraries, n_threads=None):
             .sort("Motif3", "GC")
         )
 
-        # Collect motif data for parallel processing
-        motif_tasks = []
         for (m,), df2 in df.group_by("Motif3", maintain_order=True):
             df2 = df2.sort("GC").select("GC", "Ratio", "Count")
             x, y, z = df2["GC"], df2["Ratio"], df2["Count"]
             library2background[library][m] = (x, y, z)
-            motif_tasks.append((m, x.to_list(), y.to_list()))
-        
-        # Parallel fitting using multiprocessing
-        n_workers = n_threads or min(mp.cpu_count(), len(motif_tasks))
-        n_workers = max(1, n_workers)
-        
-        if len(motif_tasks) > 1 and n_workers > 1:
-            logging.info(f"    Fitting {len(motif_tasks)} motifs using {n_workers} workers")
-            with mp.Pool(n_workers) as pool:
-                results = pool.map(_fit_motif_worker, motif_tasks)
-        else:
-            # Sequential for single motif or single thread
-            results = [_fit_motif_worker(task) for task in motif_tasks]
-        
-        # Collect results
-        for motif, result, error in results:
-            if error:
-                if "insufficient data" in error:
-                    logging.info(f"    Skipping fit for motif {motif}: {error}")
-                else:
-                    logging.warning(f"    Failed to fit motif {motif} for {library}: {error}")
-                library2gcfit[library][motif] = [0.0001, 8, 0.03, 10, 0.4]
+            
+            # Data quality checks before fitting
+            x_list = x.to_list()
+            y_list = y.to_list()
+            skip_reason = None
+            
+            if len(x_list) < 5:
+                skip_reason = f"insufficient data ({len(x_list)} < 5)"
             else:
-                library2gcfit[library][motif] = result
+                y_array = np.array(y_list)
+                y_min, y_max = np.min(y_array), np.max(y_array)
+                y_range = y_max - y_min
+                y_mean = np.mean(y_array)
+                
+                if y_range < 1e-10:
+                    skip_reason = f"no variance in data"
+                elif y_mean > 0 and y_range / y_mean < 0.05:
+                    skip_reason = f"insufficient variation"
+                elif len(set(x_list)) < 3:
+                    skip_reason = f"insufficient unique GC values"
+            
+            if skip_reason:
+                logging.info(f"    Skipping fit for motif {m}: {skip_reason}")
+                library2gcfit[library][m] = [0.0001, 8, 0.03, 10, 0.4]
+                continue
+            
+            try:
+                library2gcfit[library][m] = fit_motif(
+                    pl.Series(x_list), pl.Series(y_list)
+                )
+            except Exception as e:
+                logging.warning(f"    Failed to fit motif {m} for {library}: {e}")
+                library2gcfit[library][m] = [0.0001, 8, 0.03, 10, 0.4]  # Fallback
 
     return library2background, library2gcfit
 
@@ -317,12 +289,9 @@ if __name__ == "__main__":
         pl.DataFrame().write_csv(output_file, separator="\t")
         exit(0)
 
-    # Get thread count from environment (Snakemake sets this) or use CPU count
-    n_threads = int(os.environ.get('SLURM_CPUS_PER_TASK', mp.cpu_count()))
-    
     logging.info(f"Processing {len(df_sites)} sites for libraries: {libraries}")
-    logging.info(f"Calculating background and fitting using {n_threads} threads")
-    library2background, library2gcfit = calculate_background_fitting(df_sites, libraries, n_threads)
+    logging.info("Calculating background and fitting")
+    library2background, library2gcfit = calculate_background_fitting(df_sites, libraries)
     
     pickle.dump(
         library2background, open(args.output.removesuffix(".tsv") + ".background.pkl", "wb")
