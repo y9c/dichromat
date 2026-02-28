@@ -60,7 +60,9 @@ if [ "$UNLOCK" = true ]; then
 fi
 
 export LC_ALL=C.UTF-8
-LOGFILE="dichromat_LOG_$(date +"%F-%H%M%S").txt"
+# Create workspace directory if needed and place logs there to keep project root clean
+mkdir -p "${PROJECT_DIR}/workspace_${BATCH}"
+LOGFILE="${PROJECT_DIR}/workspace_${BATCH}/dichromat_LOG_$(date +"%F-%H%M%S").txt"
 
 echo -e "\033[0;32mREAD DEBUG LOG AT\033[0m ${LOGFILE}"
 if [ "$BENCH" = true ]; then
@@ -107,7 +109,7 @@ if [ "$BENCH" = true ]; then
     
     # Fallback to monitor script if plugin not available
     if [ "$USE_LOGGER_PLUGIN" = false ]; then
-        echo -e "\033[0;33mResource logger plugin not installed, using fallback monitor\033[0m"
+        echo -e "\033[0;33mUsing SLURM sstat-based resource monitor (real-time memory/CPU)\033[0m"
         
         # Function to cleanup monitor
         cleanup_monitor() {
@@ -128,14 +130,16 @@ if [ "$BENCH" = true ]; then
         # Set trap to cleanup monitor on exit
         trap cleanup_monitor EXIT INT TERM
         
-        # Start resource monitor
+        # Start resource monitor - handles both terminal display and logging internally
+        echo -e "\n===== Real-Time Resource Monitoring =====" | tee -a "${LOGFILE}"
+        MONITOR_LOG="${LOGFILE}.monitor"
         if [ -d "${PROJECT_DIR}/development/.venv" ]; then
             (
-                cd "${PROJECT_DIR}/development" && uv run python monitor_resources.py "$USER" 30
-            ) > "${LOGFILE}.resources" 2>&1 &
+                cd "${PROJECT_DIR}/development" && uv run python monitor_rich.py "$USER" 5 "$MONITOR_LOG"
+            ) &
             MONITOR_PID=$!
         else
-            python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
+            python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "$MONITOR_LOG" 2>&1 &
             MONITOR_PID=$!
         fi
     fi
@@ -152,16 +156,17 @@ cleanup_status $EXIT_CODE
 # Generate benchmark report if enabled and benchmarks exist
 if [ "$BENCH" = true ]; then
     # Show real-time resource summary (only for fallback monitor)
-    if [ "$USE_LOGGER_PLUGIN" = false ] && [ -f "${LOGFILE}.resources" ]; then
+    if [ "$USE_LOGGER_PLUGIN" = false ] && [ -f "${LOGFILE}.monitor" ]; then
         # Check if file has content
-        if [ -s "${LOGFILE}.resources" ]; then
+        if [ -s "${LOGFILE}.monitor" ]; then
             echo ""
             echo -e "\033[0;34mReal-time Resource Summary:\033[0m"
-            tail -20 "${LOGFILE}.resources"
-        else
-            # Remove empty file
-            rm -f "${LOGFILE}.resources"
+            tail -30 "${LOGFILE}.monitor"
+            # Append to main log
+            cat "${LOGFILE}.monitor" >> "${LOGFILE}"
         fi
+        # Clean up monitor log
+        rm -f "${LOGFILE}.monitor"
     fi
     
     # Generate visual benchmark report
@@ -170,9 +175,9 @@ if [ "$BENCH" = true ]; then
         echo ""
         REPORT_FILE="${PROJECT_DIR}/workspace_${BATCH}/benchmark_report_$(date +%Y%m%d_%H%M%S).txt"
         if [ -d "${PROJECT_DIR}/development/.venv" ]; then
-            cd "${PROJECT_DIR}/development" && uv run python benchmark_report.py "$BENCHMARK_DIR" "$REPORT_FILE" 2>/dev/null || true
+            uv run --project "${PROJECT_DIR}/development" python "${PROJECT_DIR}/development/benchmark_report.py" "${PROJECT_DIR}/workspace_${BATCH}" "$REPORT_FILE" 2>/dev/null || true
         else
-            python "${PROJECT_DIR}/development/benchmark_report.py" "$BENCHMARK_DIR" "$REPORT_FILE" 2>/dev/null || true
+            python "${PROJECT_DIR}/development/benchmark_report.py" "${PROJECT_DIR}/workspace_${BATCH}" "$REPORT_FILE" 2>/dev/null || true
         fi
     fi
 fi

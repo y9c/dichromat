@@ -67,25 +67,10 @@ See `default.yaml` for all available options.
 
 ### 3. Run the Pipeline
 
-There are two primary ways to execute the pipeline, depending on your environment:
-
-#### Method A: Host-Controlled (Recommended for HPC)
-In this mode, Snakemake runs on your host and manages the container execution for each rule.
-*   **Pros**: Full flexibility for cluster integration (Slurm, LSF, etc.) and better resource management.
-*   **Command**:
-    ```bash
-    ./run_pipeline.sh --batch your_batch_name
-    ```
-
-#### Method B: Container-Controlled (Zero Setup)
-In this mode, you run the container directly, which internally executes Snakemake.
-*   **Pros**: Portable and requires zero host-side configuration (except Apptainer).
-*   **Command**:
-    ```bash
-    apptainer run -B /data:/data dichromat.sif -c config.yaml
-    ```
-    *(Note: Ensure you bind-mount your data folders using the `-B` flag as shown.)*
-
+#### Quick Start (Simple)
+```bash
+./dichromat.sh --batch your_batch_name
+```
 
 ## 📊 Key Features
 *   **Competitive Mapping**: Simultaneously align to transcriptome and masking references (rRNA, spike-ins).
