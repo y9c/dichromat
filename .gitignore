@@ -70,3 +70,4 @@ src/log_handler.py
 # Specific development tools (previously covered by development/ wildcard)
 # Development build artifacts
 development/
+*.txt.resources
