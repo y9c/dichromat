@@ -58,7 +58,11 @@ fi
 
 export LC_ALL=C.UTF-8
 LOGFILE="dichromat_LOG_$(date +"%F-%H%M%S").txt"
+BENCHMARK_DIR="${PROJECT_DIR}/workspace_${BATCH}/.snakemake/benchmarks"
+mkdir -p "$BENCHMARK_DIR"
+
 echo -e "\033[0;32mREAD DEBUG LOG AT\033[0m ${LOGFILE}"
+echo -e "\033[0;34mBenchmark dir:\033[0m ${BENCHMARK_DIR}"
 echo -n "Analyzing... "
 
 # Cleanup function for terminal state
@@ -71,7 +75,7 @@ cleanup_status() {
     fi
 }
 
-# Run Snakemake and capture output
+# Run Snakemake with benchmarking and capture output
 snakemake --configfile "$CONFIG" \
           -p --rerun-incomplete \
           -s Snakefile \
@@ -82,8 +86,17 @@ snakemake --configfile "$CONFIG" \
           --use-apptainer \
           --apptainer-args "-B /data -B ${PROJECT_DIR}" \
           --latency-wait 60 \
+          --benchmark-extended \
           "$@" > "${LOGFILE}" 2>&1
 
 EXIT_CODE=$?
 cleanup_status $EXIT_CODE
+
+# Generate benchmark report if benchmarks exist
+if [ -d "$BENCHMARK_DIR" ] && [ "$(ls -A $BENCHMARK_DIR/*.benchmark.txt 2>/dev/null)" ]; then
+    echo ""
+    echo -e "\033[0;34mGenerating benchmark report...\033[0m"
+    python "${PROJECT_DIR}/src/analyze_benchmarks.py" "$BENCHMARK_DIR" 2>/dev/null || true
+fi
+
 exit $EXIT_CODE
