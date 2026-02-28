@@ -67,3 +67,8 @@ development/dichromat-vm-builder/
 development/dichromat-vm-builder-extracted/
 development/dichromat-vm-builder.skill
 development/upload_to_zenodo.py
+
+# Analysis scripts (development tools)
+src/analyze_runtime.py
+src/analyze_benchmarks.py
+src/log_handler.py
