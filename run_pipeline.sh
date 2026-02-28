@@ -59,7 +59,17 @@ fi
 export LC_ALL=C.UTF-8
 LOGFILE="dichromat_LOG_$(date +"%F-%H%M%S").txt"
 echo -e "\033[0;32mREAD DEBUG LOG AT\033[0m ${LOGFILE}"
-printf "\033[0;33m Analyzing...\033[0m"
+echo -n "Analyzing... "
+
+# Cleanup function for terminal state
+cleanup_status() {
+    local status=$1
+    if [ "$status" -eq 0 ]; then
+        echo -e "\r\033[K\033[0;32m✔\033[0m Successfully finished all jobs."
+    else
+        echo -e "\r\033[K\033[0;31m✗\033[0m Jobs exit with error!"
+    fi
+}
 
 # Run Snakemake and capture output
 snakemake --configfile "$CONFIG" \
@@ -74,10 +84,6 @@ snakemake --configfile "$CONFIG" \
           --latency-wait 60 \
           "$@" > "${LOGFILE}" 2>&1
 
-if [ $? -eq 0 ]; then
-  printf "\033[0;33m\b\b\b\b\b\b\b\b\b\b\b\b\b\033[0m"
-  printf "\033[0;32m\xE2\x9C\x94\033[0m Successfully finished all jobs.\n"
-else
-  printf "\033[0;33m\b\b\b\b\b\b\b\b\b\b\b\b\b\b\033[0m"
-  printf "\033[0;31m\xE2\x9D\x8C\033[0m Jobs exit with error!\n"
-fi
+EXIT_CODE=$?
+cleanup_status $EXIT_CODE
+exit $EXIT_CODE
