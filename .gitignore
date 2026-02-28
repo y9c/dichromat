@@ -72,3 +72,6 @@ development/upload_to_zenodo.py
 src/analyze_runtime.py
 src/analyze_benchmarks.py
 src/log_handler.py
+
+# Development build artifacts
+development/dichromat.sif
