@@ -94,12 +94,18 @@ SNAKEMAKE_CMD="snakemake --configfile $CONFIG \
 if [ "$BENCH" = true ]; then
     SNAKEMAKE_CMD="$SNAKEMAKE_CMD --benchmark-extended"
     
-    # Check if logger plugin is installed
-    if python -c "import snakemake_logger_resource" 2>/dev/null; then
-        echo -e "\033[0;34mUsing Snakemake resource logger plugin\033[0m"
-        SNAKEMAKE_CMD="$SNAKEMAKE_CMD --logger resource --logger-resource-interval 30"
+    # Check if development environment with logger plugin is available
+    if [ -d "${PROJECT_DIR}/development/.venv" ]; then
+        # Use uv run to execute with development dependencies
+        UV_CMD="cd ${PROJECT_DIR}/development && uv run python"
+        echo -e "\033[0;34mUsing uv development environment for monitoring\033[0m"
+        
+        # Start resource monitor using uv
+        ${UV_CMD} "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
+        MONITOR_PID=$!
     else
-        echo -e "\033[0;33mResource logger plugin not installed, using fallback monitor\033[0m"
+        # Fallback to system python
+        echo -e "\033[0;33mDevelopment venv not found, using system python\033[0m"
         python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
         MONITOR_PID=$!
     fi
@@ -108,7 +114,7 @@ fi
 # Run Snakemake and capture output
 eval $SNAKEMAKE_CMD "$@" > "${LOGFILE}" 2>&1
 
-# Stop fallback monitor if running
+# Stop monitor if running
 if [ -n "$MONITOR_PID" ]; then
     kill $MONITOR_PID 2>/dev/null || true
     wait $MONITOR_PID 2>/dev/null || true
@@ -131,7 +137,11 @@ if [ "$BENCH" = true ]; then
     if [ -d "$BENCHMARK_DIR" ] && [ "$(ls -A $BENCHMARK_DIR/*.benchmark.txt 2>/dev/null)" ]; then
         echo ""
         echo -e "\033[0;34mBenchmark Report:\033[0m"
-        python "${PROJECT_DIR}/development/analyze_benchmarks.py" "$BENCHMARK_DIR" 2>/dev/null || true
+        if [ -d "${PROJECT_DIR}/development/.venv" ]; then
+            cd "${PROJECT_DIR}/development" && uv run python analyze_benchmarks.py "$BENCHMARK_DIR" 2>/dev/null || true
+        else
+            python "${PROJECT_DIR}/development/analyze_benchmarks.py" "$BENCHMARK_DIR" 2>/dev/null || true
+        fi
     fi
 fi
 
