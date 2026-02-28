@@ -92,61 +92,76 @@ SNAKEMAKE_CMD="snakemake --configfile $CONFIG \
 
 # Add benchmarking if enabled
 MONITOR_PID=""
+USE_LOGGER_PLUGIN=false
 if [ "$BENCH" = true ]; then
     SNAKEMAKE_CMD="$SNAKEMAKE_CMD --benchmark-extended"
     
-    # Function to cleanup monitor
-    cleanup_monitor() {
-        if [ -n "$MONITOR_PID" ]; then
-            echo -e "\n\033[0;34mStopping resource monitor...\033[0m" >&2
-            kill -TERM $MONITOR_PID 2>/dev/null || true
-            # Wait up to 5 seconds for graceful shutdown
-            for i in 1 2 3 4 5; do
-                if ! kill -0 $MONITOR_PID 2>/dev/null; then
-                    break
-                fi
-                sleep 1
-            done
-            # Force kill if still running
-            kill -9 $MONITOR_PID 2>/dev/null || true
-            wait $MONITOR_PID 2>/dev/null || true
-        fi
-    }
-    
-    # Set trap to cleanup monitor on exit
-    trap cleanup_monitor EXIT INT TERM
-    
-    # Check if development environment with logger plugin is available
+    # Check if logger plugin is available in uv environment
     if [ -d "${PROJECT_DIR}/development/.venv" ]; then
-        echo -e "\033[0;34mUsing uv development environment for monitoring\033[0m"
+        if (cd "${PROJECT_DIR}/development" && uv run python -c "import snakemake_logger_resource" 2>/dev/null); then
+            echo -e "\033[0;34mUsing Snakemake resource logger plugin\033[0m"
+            SNAKEMAKE_CMD="$SNAKEMAKE_CMD --logger resource --logger-resource-interval 30"
+            USE_LOGGER_PLUGIN=true
+        fi
+    fi
+    
+    # Fallback to monitor script if plugin not available
+    if [ "$USE_LOGGER_PLUGIN" = false ]; then
+        echo -e "\033[0;33mResource logger plugin not installed, using fallback monitor\033[0m"
         
-        # Start resource monitor using uv
-        (
-            cd "${PROJECT_DIR}/development" && uv run python monitor_resources.py "$USER" 30
-        ) > "${LOGFILE}.resources" 2>&1 &
-        MONITOR_PID=$!
-    else
-        echo -e "\033[0;33mDevelopment venv not found, using system python\033[0m"
-        python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
-        MONITOR_PID=$!
+        # Function to cleanup monitor
+        cleanup_monitor() {
+            if [ -n "$MONITOR_PID" ]; then
+                echo -e "\n\033[0;34mStopping resource monitor...\033[0m" >&2
+                kill -TERM $MONITOR_PID 2>/dev/null || true
+                for i in 1 2 3 4 5; do
+                    if ! kill -0 $MONITOR_PID 2>/dev/null; then
+                        break
+                    fi
+                    sleep 1
+                done
+                kill -9 $MONITOR_PID 2>/dev/null || true
+                wait $MONITOR_PID 2>/dev/null || true
+            fi
+        }
+        
+        # Set trap to cleanup monitor on exit
+        trap cleanup_monitor EXIT INT TERM
+        
+        # Start resource monitor
+        if [ -d "${PROJECT_DIR}/development/.venv" ]; then
+            (
+                cd "${PROJECT_DIR}/development" && uv run python monitor_resources.py "$USER" 30
+            ) > "${LOGFILE}.resources" 2>&1 &
+            MONITOR_PID=$!
+        else
+            python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
+            MONITOR_PID=$!
+        fi
     fi
 fi
 
 # Run Snakemake and capture output
 eval $SNAKEMAKE_CMD "$@" > "${LOGFILE}" 2>&1
 
-# Note: cleanup_monitor is called via trap on exit
+# Note: cleanup_monitor is called via trap on exit (only for fallback)
 
 EXIT_CODE=$?
 cleanup_status $EXIT_CODE
 
 # Generate benchmark report if enabled and benchmarks exist
 if [ "$BENCH" = true ]; then
-    # Show real-time resource summary
-    if [ -f "${LOGFILE}.resources" ]; then
-        echo ""
-        echo -e "\033[0;34mReal-time Resource Summary:\033[0m"
-        tail -20 "${LOGFILE}.resources"
+    # Show real-time resource summary (only for fallback monitor)
+    if [ "$USE_LOGGER_PLUGIN" = false ] && [ -f "${LOGFILE}.resources" ]; then
+        # Check if file has content
+        if [ -s "${LOGFILE}.resources" ]; then
+            echo ""
+            echo -e "\033[0;34mReal-time Resource Summary:\033[0m"
+            tail -20 "${LOGFILE}.resources"
+        else
+            # Remove empty file
+            rm -f "${LOGFILE}.resources"
+        fi
     fi
     
     # Show benchmark report
