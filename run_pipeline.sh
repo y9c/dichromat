@@ -10,6 +10,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="config.yaml"
 JOBS=100
 PROFILE="slurm_changye"
+BENCH=false
 
 # Display usage
 usage() {
@@ -20,6 +21,7 @@ usage() {
     echo "  -c, --config CONFIG  Config file (default: $CONFIG)"
     echo "  -j, --jobs JOBS      Max parallel jobs (default: $JOBS)"
     echo "  -p, --profile PROF   Snakemake profile (default: $PROFILE)"
+    echo "  --bench              Enable benchmarking for runtime/resource tracking"
     echo "  -u, --unlock         Unlock the working directory"
     echo "  -h, --help           Show this help message"
     echo ""
@@ -36,6 +38,7 @@ while [[ $# -gt 0 ]]; do
         -c|--config) CONFIG="$2"; shift 2 ;;
         -j|--jobs)   JOBS="$2"; shift 2 ;;
         -p|--profile) PROFILE="$2"; shift 2 ;;
+        --bench)     BENCH=true; shift ;;
         -u|--unlock) UNLOCK=true; shift ;;
         -h|--help)   usage ;;
         --)          shift; break ;;
@@ -58,11 +61,11 @@ fi
 
 export LC_ALL=C.UTF-8
 LOGFILE="dichromat_LOG_$(date +"%F-%H%M%S").txt"
-BENCHMARK_DIR="${PROJECT_DIR}/workspace_${BATCH}/.snakemake/benchmarks"
-mkdir -p "$BENCHMARK_DIR"
 
 echo -e "\033[0;32mREAD DEBUG LOG AT\033[0m ${LOGFILE}"
-echo -e "\033[0;34mBenchmark dir:\033[0m ${BENCHMARK_DIR}"
+if [ "$BENCH" = true ]; then
+    echo -e "\033[0;34mBenchmarking enabled\033[0m"
+fi
 echo -n "Analyzing... "
 
 # Cleanup function for terminal state
@@ -75,28 +78,37 @@ cleanup_status() {
     fi
 }
 
-# Run Snakemake with benchmarking and capture output
-snakemake --configfile "$CONFIG" \
+# Build snakemake command
+SNAKEMAKE_CMD="snakemake --configfile $CONFIG \
           -p --rerun-incomplete \
           -s Snakefile \
-          --directory "${PROJECT_DIR}/workspace_${BATCH}" \
-          --config batch="$BATCH" \
-          -j "$JOBS" \
-          --profile "$PROFILE" \
+          --directory ${PROJECT_DIR}/workspace_${BATCH} \
+          --config batch=$BATCH \
+          -j $JOBS \
+          --profile $PROFILE \
           --use-apptainer \
-          --apptainer-args "-B /data -B ${PROJECT_DIR}" \
-          --latency-wait 60 \
-          --benchmark-extended \
-          "$@" > "${LOGFILE}" 2>&1
+          --apptainer-args \"-B /data -B ${PROJECT_DIR}\" \
+          --latency-wait 60"
+
+# Add benchmarking if enabled
+if [ "$BENCH" = true ]; then
+    SNAKEMAKE_CMD="$SNAKEMAKE_CMD --benchmark-extended"
+fi
+
+# Run Snakemake and capture output
+eval $SNAKEMAKE_CMD "$@" > "${LOGFILE}" 2>&1
 
 EXIT_CODE=$?
 cleanup_status $EXIT_CODE
 
-# Generate benchmark report if benchmarks exist
-if [ -d "$BENCHMARK_DIR" ] && [ "$(ls -A $BENCHMARK_DIR/*.benchmark.txt 2>/dev/null)" ]; then
-    echo ""
-    echo -e "\033[0;34mGenerating benchmark report...\033[0m"
-    python "${PROJECT_DIR}/src/analyze_benchmarks.py" "$BENCHMARK_DIR" 2>/dev/null || true
+# Generate benchmark report if enabled and benchmarks exist
+if [ "$BENCH" = true ]; then
+    BENCHMARK_DIR="${PROJECT_DIR}/workspace_${BATCH}/.snakemake/benchmarks"
+    if [ -d "$BENCHMARK_DIR" ] && [ "$(ls -A $BENCHMARK_DIR/*.benchmark.txt 2>/dev/null)" ]; then
+        echo ""
+        echo -e "\033[0;34mGenerating benchmark report...\033[0m"
+        python "${PROJECT_DIR}/development/analyze_benchmarks.py" "$BENCHMARK_DIR" 2>/dev/null || true
+    fi
 fi
 
 exit $EXIT_CODE
