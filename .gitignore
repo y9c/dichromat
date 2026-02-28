@@ -62,16 +62,11 @@ config.yaml.full
 config.yaml.bak
 config.yaml.test_backup
 
-# Specific development tools (previously covered by development/ wildcard)
-development/dichromat-vm-builder/
-development/dichromat-vm-builder-extracted/
-development/dichromat-vm-builder.skill
-development/upload_to_zenodo.py
-
 # Analysis scripts (development tools)
 src/analyze_runtime.py
 src/analyze_benchmarks.py
 src/log_handler.py
 
+# Specific development tools (previously covered by development/ wildcard)
 # Development build artifacts
-development/dichromat.sif
+development/

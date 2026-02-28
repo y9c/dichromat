@@ -91,20 +91,24 @@ SNAKEMAKE_CMD="snakemake --configfile $CONFIG \
           --latency-wait 60"
 
 # Add benchmarking if enabled
-MONITOR_PID=""
 if [ "$BENCH" = true ]; then
     SNAKEMAKE_CMD="$SNAKEMAKE_CMD --benchmark-extended"
     
-    # Start resource monitor in background
-    echo -e "\033[0;34mStarting real-time resource monitor...\033[0m"
-    python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
-    MONITOR_PID=$!
+    # Check if logger plugin is installed
+    if python -c "import snakemake_logger_resource" 2>/dev/null; then
+        echo -e "\033[0;34mUsing Snakemake resource logger plugin\033[0m"
+        SNAKEMAKE_CMD="$SNAKEMAKE_CMD --logger resource --logger-resource-interval 30"
+    else
+        echo -e "\033[0;33mResource logger plugin not installed, using fallback monitor\033[0m"
+        python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
+        MONITOR_PID=$!
+    fi
 fi
 
 # Run Snakemake and capture output
 eval $SNAKEMAKE_CMD "$@" > "${LOGFILE}" 2>&1
 
-# Stop resource monitor if running
+# Stop fallback monitor if running
 if [ -n "$MONITOR_PID" ]; then
     kill $MONITOR_PID 2>/dev/null || true
     wait $MONITOR_PID 2>/dev/null || true
