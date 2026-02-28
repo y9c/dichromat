@@ -91,20 +91,41 @@ SNAKEMAKE_CMD="snakemake --configfile $CONFIG \
           --latency-wait 60"
 
 # Add benchmarking if enabled
+MONITOR_PID=""
 if [ "$BENCH" = true ]; then
     SNAKEMAKE_CMD="$SNAKEMAKE_CMD --benchmark-extended"
     
+    # Function to cleanup monitor
+    cleanup_monitor() {
+        if [ -n "$MONITOR_PID" ]; then
+            echo -e "\n\033[0;34mStopping resource monitor...\033[0m" >&2
+            kill -TERM $MONITOR_PID 2>/dev/null || true
+            # Wait up to 5 seconds for graceful shutdown
+            for i in 1 2 3 4 5; do
+                if ! kill -0 $MONITOR_PID 2>/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+            # Force kill if still running
+            kill -9 $MONITOR_PID 2>/dev/null || true
+            wait $MONITOR_PID 2>/dev/null || true
+        fi
+    }
+    
+    # Set trap to cleanup monitor on exit
+    trap cleanup_monitor EXIT INT TERM
+    
     # Check if development environment with logger plugin is available
     if [ -d "${PROJECT_DIR}/development/.venv" ]; then
-        # Use uv run to execute with development dependencies
-        UV_CMD="cd ${PROJECT_DIR}/development && uv run python"
         echo -e "\033[0;34mUsing uv development environment for monitoring\033[0m"
         
         # Start resource monitor using uv
-        ${UV_CMD} "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
+        (
+            cd "${PROJECT_DIR}/development" && uv run python monitor_resources.py "$USER" 30
+        ) > "${LOGFILE}.resources" 2>&1 &
         MONITOR_PID=$!
     else
-        # Fallback to system python
         echo -e "\033[0;33mDevelopment venv not found, using system python\033[0m"
         python "${PROJECT_DIR}/development/monitor_resources.py" "$USER" 30 > "${LOGFILE}.resources" 2>&1 &
         MONITOR_PID=$!
@@ -114,11 +135,7 @@ fi
 # Run Snakemake and capture output
 eval $SNAKEMAKE_CMD "$@" > "${LOGFILE}" 2>&1
 
-# Stop monitor if running
-if [ -n "$MONITOR_PID" ]; then
-    kill $MONITOR_PID 2>/dev/null || true
-    wait $MONITOR_PID 2>/dev/null || true
-fi
+# Note: cleanup_monitor is called via trap on exit
 
 EXIT_CODE=$?
 cleanup_status $EXIT_CODE
