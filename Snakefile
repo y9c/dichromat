@@ -94,6 +94,7 @@ TEMPDIR = Path(
 PATH = SimpleNamespace(**config.get("path", {}))
 
 INTERNALDIR = Path("internal_files")
+BENCHDIR = Path(".snakemake/benchmarks")
 MARKDUP = config.get("markdup", True)
 SPLICE_GENOME = config.get("splice_genome", True)
 SPLICE_CONTAM = config.get("splice_contamination", False)
@@ -147,6 +148,8 @@ def get_lib_subdir(sample, rn):
 
 
 rule all:
+    benchmark:
+        BENCHDIR / "all.benchmark.txt"
     input:
         "report_reads/mapping.html",
         "report_reads/trimmed.html",
@@ -160,6 +163,8 @@ rule all:
 
 
 rule combine_contamination_fa:
+    benchmark:
+        BENCHDIR / "combine_contamination_fa.benchmark.txt"
     input:
         REF.get("contamination", []) if "contamination" in REF else [],
     output:
@@ -174,6 +179,8 @@ rule combine_contamination_fa:
 
 
 rule build_contamination_hisat3n_index:
+    benchmark:
+        BENCHDIR / "build_contamination_hisat3n_index.benchmark.txt"
     input:
         INTERNALDIR / "ref/contamination.fa",
     output:
@@ -190,6 +197,8 @@ rule build_contamination_hisat3n_index:
 
 
 rule combine_genes_fa:
+    benchmark:
+        BENCHDIR / "combine_genes_fa.benchmark.txt"
     input:
         REF.get("genes", []) if "genes" in REF else [],
     output:
@@ -204,6 +213,8 @@ rule combine_genes_fa:
 
 
 rule prepared_transcript_ref:
+    benchmark:
+        BENCHDIR / "prepared_transcript_ref.benchmark.txt"
     input:
         fa=REF["genome"]["fa"],
         gtf=REF["genome"]["gtf"],
@@ -221,6 +232,8 @@ rule prepared_transcript_ref:
 
 
 rule trim_se:
+    benchmark:
+        BENCHDIR / "trim_se.benchmark.txt"
     input:
         lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
     output:
@@ -242,6 +255,8 @@ rule trim_se:
 
 
 rule trim_pe:
+    benchmark:
+        BENCHDIR / "trim_pe.benchmark.txt"
     input:
         r1=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
         r2=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R2") or [],
@@ -266,6 +281,8 @@ rule trim_pe:
 
 
 rule finalize_trim_report:
+    benchmark:
+        BENCHDIR / "finalize_trim_report.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"trim/PE/{wildcards.sample}_{wildcards.rn}.json"
@@ -279,6 +296,8 @@ rule finalize_trim_report:
 
 
 rule finalize_discarded_reads:
+    benchmark:
+        BENCHDIR / "finalize_discarded_reads.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR
@@ -297,6 +316,8 @@ rule finalize_discarded_reads:
 
 
 rule qc_trimmed:
+    benchmark:
+        BENCHDIR / "qc_trimmed.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR
@@ -314,6 +335,8 @@ rule qc_trimmed:
 
 
 rule report_qc_trimmed:
+    benchmark:
+        BENCHDIR / "report_qc_trimmed.benchmark.txt"
     input:
         [
             INTERNALDIR / f"qc/fastqc/{sample}_{rn}_{rd}/fastqc_data.txt"
@@ -331,6 +354,8 @@ rule report_qc_trimmed:
 
 
 rule premap_align_pe:
+    benchmark:
+        BENCHDIR / "premap_align_pe.benchmark.txt"
     input:
         fq1=TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz",
         fq2=TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz",
@@ -362,6 +387,8 @@ rule premap_align_pe:
 
 
 rule premap_align_se:
+    benchmark:
+        BENCHDIR / "premap_align_se.benchmark.txt"
     input:
         fq=TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz",
         idx=INTERNALDIR / "ref/contamination.3n.GA.1.ht2",
@@ -392,6 +419,8 @@ rule premap_align_se:
 
 
 rule finalize_premap_summary:
+    benchmark:
+        BENCHDIR / "finalize_premap_summary.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"premap/PE/{wildcards.sample}_{wildcards.rn}.summary"
@@ -405,6 +434,8 @@ rule finalize_premap_summary:
 
 
 rule premap_fixmate_pe:
+    benchmark:
+        BENCHDIR / "premap_fixmate_pe.benchmark.txt"
     input:
         TEMPDIR / "premap/PE/{sample}_{rn}.contam.bam",
     output:
@@ -415,6 +446,8 @@ rule premap_fixmate_pe:
 
 
 rule premap_fixmate_se:
+    benchmark:
+        BENCHDIR / "premap_fixmate_se.benchmark.txt"
     input:
         TEMPDIR / "premap/SE/{sample}_{rn}.contam.bam",
     output:
@@ -425,6 +458,8 @@ rule premap_fixmate_se:
 
 
 rule finalize_premap_bam:
+    benchmark:
+        BENCHDIR / "finalize_premap_bam.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"premap/PE/{wildcards.sample}_{wildcards.rn}.fixmate.bam"
@@ -440,6 +475,8 @@ rule finalize_premap_bam:
 
 
 rule premap_get_unmapped_pe:
+    benchmark:
+        BENCHDIR / "premap_get_unmapped_pe.benchmark.txt"
     input:
         un=TEMPDIR / "premap/PE/{sample}_{rn}.unmap.bam",
     output:
@@ -452,6 +489,8 @@ rule premap_get_unmapped_pe:
 
 
 rule premap_get_unmapped_se:
+    benchmark:
+        BENCHDIR / "premap_get_unmapped_se.benchmark.txt"
     input:
         un=TEMPDIR / "premap/SE/{sample}_{rn}.unmap.bam",
     output:
@@ -466,6 +505,8 @@ rule premap_get_unmapped_se:
 
 
 rule mainmap_align_pe:
+    benchmark:
+        BENCHDIR / "mainmap_align_pe.benchmark.txt"
     input:
         fq1=lambda wildcards: (
             TEMPDIR / f"unmapped/premap/PE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
@@ -495,6 +536,8 @@ rule mainmap_align_pe:
 
 
 rule mainmap_align_se:
+    benchmark:
+        BENCHDIR / "mainmap_align_se.benchmark.txt"
     input:
         fq=lambda wildcards: (
             TEMPDIR / f"unmapped/premap/SE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
@@ -519,6 +562,8 @@ rule mainmap_align_se:
 
 
 rule finalize_mainmap_summary:
+    benchmark:
+        BENCHDIR / "finalize_mainmap_summary.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"mainmap/PE/{wildcards.sample}_{wildcards.rn}.summary"
@@ -546,6 +591,8 @@ if HAS_GENES:
 
 
 rule finalize_mainmap_transcript_bam:
+    benchmark:
+        BENCHDIR / "finalize_mainmap_transcript_bam.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR
@@ -559,6 +606,8 @@ rule finalize_mainmap_transcript_bam:
 
 
 rule mainmap_get_unmapped_pe:
+    benchmark:
+        BENCHDIR / "mainmap_get_unmapped_pe.benchmark.txt"
     input:
         un=TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam",
     output:
@@ -571,6 +620,8 @@ rule mainmap_get_unmapped_pe:
 
 
 rule mainmap_get_unmapped_se:
+    benchmark:
+        BENCHDIR / "mainmap_get_unmapped_se.benchmark.txt"
     input:
         un=TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam",
     output:
@@ -585,6 +636,8 @@ rule mainmap_get_unmapped_se:
 
 
 rule remap_align_pe:
+    benchmark:
+        BENCHDIR / "remap_align_pe.benchmark.txt"
     input:
         fq1=TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R1.fq.gz",
         fq2=TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz",
@@ -614,6 +667,8 @@ rule remap_align_pe:
 
 
 rule remap_align_se:
+    benchmark:
+        BENCHDIR / "remap_align_se.benchmark.txt"
     input:
         fq=TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz",
     output:
@@ -642,6 +697,8 @@ rule remap_align_se:
 
 
 rule finalize_remap_summary:
+    benchmark:
+        BENCHDIR / "finalize_remap_summary.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"remap/PE/{wildcards.sample}_{wildcards.rn}.summary"
@@ -655,6 +712,8 @@ rule finalize_remap_summary:
 
 
 rule remap_fixmate_pe:
+    benchmark:
+        BENCHDIR / "remap_fixmate_pe.benchmark.txt"
     input:
         TEMPDIR / "remap/PE/{sample}_{rn}.genome.bam",
     output:
@@ -665,6 +724,8 @@ rule remap_fixmate_pe:
 
 
 rule remap_fixmate_se:
+    benchmark:
+        BENCHDIR / "remap_fixmate_se.benchmark.txt"
     input:
         TEMPDIR / "remap/SE/{sample}_{rn}.genome.bam",
     output:
@@ -675,6 +736,8 @@ rule remap_fixmate_se:
 
 
 rule remap_tag_pe:
+    benchmark:
+        BENCHDIR / "remap_tag_pe.benchmark.txt"
     input:
         TEMPDIR / "remap/PE/{sample}_{rn}.fixmate.bam",
     output:
@@ -689,6 +752,8 @@ rule remap_tag_pe:
 
 
 rule remap_tag_se:
+    benchmark:
+        BENCHDIR / "remap_tag_se.benchmark.txt"
     input:
         TEMPDIR / "remap/SE/{sample}_{rn}.fixmate.bam",
     output:
@@ -703,6 +768,8 @@ rule remap_tag_se:
 
 
 rule remap_filter_sort_pe:
+    benchmark:
+        BENCHDIR / "remap_filter_sort_pe.benchmark.txt"
     input:
         TEMPDIR / "remap/PE/{sample}_{rn}.tagged.bam",
     output:
@@ -718,6 +785,8 @@ rule remap_filter_sort_pe:
 
 
 rule remap_filter_sort_se:
+    benchmark:
+        BENCHDIR / "remap_filter_sort_se.benchmark.txt"
     input:
         TEMPDIR / "remap/SE/{sample}_{rn}.tagged.bam",
     output:
@@ -733,6 +802,8 @@ rule remap_filter_sort_se:
 
 
 rule finalize_genome_bam:
+    benchmark:
+        BENCHDIR / "finalize_genome_bam.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"remap/PE/{wildcards.sample}_{wildcards.rn}.mapped.bam"
@@ -746,6 +817,8 @@ rule finalize_genome_bam:
 
 
 rule finalize_genome_report:
+    benchmark:
+        BENCHDIR / "finalize_genome_report.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"remap/PE/{wildcards.sample}_{wildcards.rn}.report.json"
@@ -759,6 +832,8 @@ rule finalize_genome_report:
 
 
 rule remap_get_unmapped_pe:
+    benchmark:
+        BENCHDIR / "remap_get_unmapped_pe.benchmark.txt"
     input:
         un=TEMPDIR / "remap/PE/{sample}_{rn}.final_unmap.bam",
     output:
@@ -771,6 +846,8 @@ rule remap_get_unmapped_pe:
 
 
 rule remap_get_unmapped_se:
+    benchmark:
+        BENCHDIR / "remap_get_unmapped_se.benchmark.txt"
     input:
         un=TEMPDIR / "remap/SE/{sample}_{rn}.final_unmap.bam",
     output:
@@ -782,6 +859,8 @@ rule remap_get_unmapped_se:
 
 
 rule finalize_unmapped_fq:
+    benchmark:
+        BENCHDIR / "finalize_unmapped_fq.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR
@@ -797,6 +876,8 @@ rule finalize_unmapped_fq:
 
 
 rule unmapped_qc:
+    benchmark:
+        BENCHDIR / "unmapped_qc.benchmark.txt"
     input:
         INTERNALDIR / "qc/{sample}_{rn}_unmap_{rd}.fq.gz",
     output:
@@ -811,6 +892,8 @@ rule unmapped_qc:
 
 
 rule unmapped_report:
+    benchmark:
+        BENCHDIR / "unmapped_report.benchmark.txt"
     input:
         [
             INTERNALDIR / f"qc/fastqc/unmapped/{s}_{r}_{i}/fastqc_data.txt"
@@ -831,6 +914,8 @@ rule unmapped_report:
 
 
 rule combine_bams:
+    benchmark:
+        BENCHDIR / "combine_bams.benchmark.txt"
     input:
         lambda wildcards: [
             INTERNALDIR / f"run_bam/{wildcards.sample}_{r}.{wildcards.reftype}.bam"
@@ -847,6 +932,8 @@ rule combine_bams:
 
 
 rule stat_combined:
+    benchmark:
+        BENCHDIR / "stat_combined.benchmark.txt"
     input:
         bam=TEMPDIR / "combined/{sample}.{reftype}.bam",
     output:
@@ -861,6 +948,8 @@ rule stat_combined:
 
 
 rule drop_duplicates:
+    benchmark:
+        BENCHDIR / "drop_duplicates.benchmark.txt"
     input:
         bam=TEMPDIR / "combined/{sample}.{reftype}.bam",
         bai=TEMPDIR / "combined/{sample}.{reftype}.bam.bai",
@@ -873,6 +962,8 @@ rule drop_duplicates:
 
 
 rule dedup_index:
+    benchmark:
+        BENCHDIR / "dedup_index.benchmark.txt"
     input:
         bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
     output:
@@ -883,6 +974,8 @@ rule dedup_index:
 
 
 rule stat_dedup:
+    benchmark:
+        BENCHDIR / "stat_dedup.benchmark.txt"
     input:
         bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
     output:
@@ -897,6 +990,8 @@ rule stat_dedup:
 
 
 rule liftover_transcript_to_genome:
+    benchmark:
+        BENCHDIR / "liftover_transcript_to_genome.benchmark.txt"
     input:
         transcripts=INTERNALDIR / "aligned_bam/{sample}.transcript.bam",
         genome=INTERNALDIR / "aligned_bam/{sample}.genome.bam",
@@ -915,6 +1010,8 @@ rule liftover_transcript_to_genome:
 
 
 rule count_reads:
+    benchmark:
+        BENCHDIR / "count_reads.benchmark.txt"
     input:
         report=lambda wildcards: [
             INTERNALDIR / f"qc/trimming/{wildcards.sample}_{r}.json"
@@ -963,6 +1060,8 @@ rule count_reads:
 
 
 rule insert_size:
+    benchmark:
+        BENCHDIR / "insert_size.benchmark.txt"
     input:
         bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
     output:
@@ -975,6 +1074,8 @@ rule insert_size:
 
 
 rule read_length:
+    benchmark:
+        BENCHDIR / "read_length.benchmark.txt"
     input:
         bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
     output:
@@ -1011,6 +1112,8 @@ if HAS_GENES:
 
 
 rule run_countmut:
+    benchmark:
+        BENCHDIR / "run_countmut.benchmark.txt"
     input:
         bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
         bai=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam.bai",
@@ -1034,6 +1137,8 @@ rule run_countmut:
 
 
 rule pileup_base:
+    benchmark:
+        BENCHDIR / "pileup_base.benchmark.txt"
     input:
         TEMPDIR / "pileup/{sample}.{reftype}.tsv",
     output:
@@ -1044,6 +1149,8 @@ rule pileup_base:
 
 
 rule unfilter_genes_stat:
+    benchmark:
+        BENCHDIR / "unfilter_genes_stat.benchmark.txt"
     input:
         INTERNALDIR / "pileup/{sample}.{reftype}.tsv.gz",
     output:
@@ -1055,6 +1162,8 @@ rule unfilter_genes_stat:
 
 
 rule motif_conversion_rate_stat:
+    benchmark:
+        BENCHDIR / "motif_conversion_rate_stat.benchmark.txt"
     input:
         pileup=INTERNALDIR / "pileup/{sample}.{reftype}.tsv.gz",
     output:
@@ -1064,6 +1173,8 @@ rule motif_conversion_rate_stat:
 
 
 rule join_pileup_table:
+    benchmark:
+        BENCHDIR / "join_pileup_table.benchmark.txt"
     input:
         expand(
             INTERNALDIR / "pileup/{sample}.{{reftype}}.tsv.gz",
@@ -1091,6 +1202,8 @@ rule join_pileup_table:
 
 
 rule merge_gene_and_genome_table:
+    benchmark:
+        BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
     input:
         info=INTERNALDIR / "ref/transcript.tsv",
         transcripts="report_sites/transcript.tsv.gz",
@@ -1105,6 +1218,8 @@ rule merge_gene_and_genome_table:
 
 
 rule filter_eTAM_sites:
+    benchmark:
+        BENCHDIR / "filter_eTAM_sites.benchmark.txt"
     input:
         "report_sites/merged.tsv.gz",
     output:
@@ -1117,6 +1232,8 @@ rule filter_eTAM_sites:
 
 
 rule group_and_pval_cal:
+    benchmark:
+        BENCHDIR / "group_and_pval_cal.benchmark.txt"
     input:
         "report_sites/merged.tsv.gz",
     output:
@@ -1136,6 +1253,8 @@ rule group_and_pval_cal:
 
 
 rule aggregate_multiqc_stats:
+    benchmark:
+        BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
     input:
         counts=expand(
             INTERNALDIR / "stat/count/{sample}.tsv", sample=SAMPLE2DATA.keys()
@@ -1155,6 +1274,8 @@ rule aggregate_multiqc_stats:
 
 
 rule generate_mapping_report:
+    benchmark:
+        BENCHDIR / "generate_mapping_report.benchmark.txt"
     input:
         INTERNALDIR / "stat/multiqc/mapping_stats_mqc.tsv",
         expand(
@@ -1174,6 +1295,8 @@ rule generate_mapping_report:
 
 
 rule generate_site_report:
+    benchmark:
+        BENCHDIR / "generate_site_report.benchmark.txt"
     input:
         INTERNALDIR / "stat/multiqc/motif_conversion_mqc.tsv",
     output:
