@@ -164,15 +164,15 @@ if [ "$BENCH" = true ]; then
         fi
     fi
     
-    # Show benchmark report
+    # Generate visual benchmark report
     BENCHMARK_DIR="${PROJECT_DIR}/workspace_${BATCH}/.snakemake/benchmarks"
     if [ -d "$BENCHMARK_DIR" ] && [ "$(ls -A $BENCHMARK_DIR/*.benchmark.txt 2>/dev/null)" ]; then
         echo ""
-        echo -e "\033[0;34mBenchmark Report:\033[0m"
+        REPORT_FILE="${PROJECT_DIR}/workspace_${BATCH}/benchmark_report_$(date +%Y%m%d_%H%M%S).txt"
         if [ -d "${PROJECT_DIR}/development/.venv" ]; then
-            cd "${PROJECT_DIR}/development" && uv run python analyze_benchmarks.py "$BENCHMARK_DIR" 2>/dev/null || true
+            cd "${PROJECT_DIR}/development" && uv run python benchmark_report.py "$BENCHMARK_DIR" "$REPORT_FILE" 2>/dev/null || true
         else
-            python "${PROJECT_DIR}/development/analyze_benchmarks.py" "$BENCHMARK_DIR" 2>/dev/null || true
+            python "${PROJECT_DIR}/development/benchmark_report.py" "$BENCHMARK_DIR" "$REPORT_FILE" 2>/dev/null || true
         fi
     fi
 fi
