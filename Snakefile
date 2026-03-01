@@ -149,10 +149,6 @@ def get_lib_subdir(sample, rn):
 
 
 rule all:
-    benchmark:
-        BENCHDIR / "all.benchmark.txt"
-    benchmark:
-        BENCHDIR / "all.benchmark.txt"
     input:
         "report_reads/mapping.html",
         "report_reads/trimmed.html",
@@ -161,6 +157,8 @@ rule all:
         "report_sites/filtered.tsv" if IS_ETAM else "report_sites/sites.tsv.gz",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
         INTERNALDIR / "README.md",
+    benchmark:
+        BENCHDIR / "all.benchmark.txt"
 
 
 # prepare ref
@@ -179,7 +177,7 @@ rule internal_readme:
             f.write("- `qc/fastqc/`: FastQC reports for trimmed reads.\n")
             f.write("- `fastq/unmapped/`: Reads that failed to map to any reference.\n\n")
             f.write("### 2. `ref/`\n")
-            f.write("- Generated indices and processed reference files (contamination, genes, transcript).\n\n")
+            f.write("- Generated indices and processed reference files organized in subdirectories.\n\n")
             f.write("### 3. `bam/`\n")
             f.write("- `bam/per_run/`: Initial alignments for each sequencing run.\n")
             f.write("- `bam/*.genome.bam`: Final merged, deduplicated, and sorted BAM aligned to genome.\n")
@@ -190,9 +188,11 @@ rule internal_readme:
             f.write("- `stats/multiqc/`: Summaries for the Mapping report.\n")
             f.write("- `stats/multiqc_sites/`: Summaries for the Site report.\n\n")
             f.write("### 5. `pileup/`\n")
-            f.write("- Site-level conversion data (tsv.gz) used for site calling.\n\n")
+            f.write("- `pileup/per_sample/`: Site-level data (tsv.gz) for each sample.\n")
+            f.write("- `pileup/transcript.tsv.gz`: Merged transcriptome pileup.\n")
+            f.write("- `pileup/genome.tsv.gz`: Merged genomic pileup.\n\n")
             f.write("---\n")
-            f.write("*Note: For final results, see `report_reads/` and `report_sites/`.*\n")
+            f.write("*Note: For final results (including merged `sites.tsv.gz`), see `report_reads/` and `report_sites/`.*\n")
 
 rule combine_contamination_fa:
     benchmark:
@@ -1290,15 +1290,13 @@ rule run_countmut:
 
 
 rule pileup_base:
-    benchmark:
-        BENCHDIR / "pileup_base_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "pileup_base.benchmark.txt"
     input:
         TEMPDIR / "pileup/{sample}.{reftype}.tsv",
     output:
-        INTERNALDIR / "pileup/{sample}.{reftype}.tsv.gz",
+        INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
     threads: 16
+    benchmark:
+        BENCHDIR / "pileup_base_{sample}_{reftype}.benchmark.txt"
     shell:
         "{PATH.bgzip} -@ {threads} -c {input} > {output}"
 
@@ -1369,8 +1367,8 @@ rule merge_gene_and_genome_table:
         BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
     input:
         info=INTERNALDIR / "ref/transcript.tsv",
-        transcripts="report_sites/transcript.tsv.gz",
-        genome="report_sites/genome.tsv.gz",
+        transcripts=INTERNALDIR / "pileup/transcript.tsv.gz",
+        genome=INTERNALDIR / "pileup/genome.tsv.gz",
     output:
         "report_sites/sites.tsv.gz",
     threads: 16
@@ -1420,10 +1418,6 @@ rule group_and_pval_cal:
 
 
 rule aggregate_multiqc_stats:
-    benchmark:
-        BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
-    benchmark:
-        BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
     input:
         counts=expand(
             INTERNALDIR / "stats/count/{sample}.tsv", sample=SAMPLE2DATA.keys()
@@ -1449,6 +1443,8 @@ rule aggregate_multiqc_stats:
         site_sum=INTERNALDIR / "stats/multiqc_sites/site_summary_mqc.tsv",
         site_dist=INTERNALDIR / "stats/multiqc_sites/site_distribution_mqc.tsv",
         dedup=INTERNALDIR / "stats/multiqc/dedup_stats_mqc.tsv",
+    benchmark:
+        BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
     shell:
         """
         {PATH.mqc_mapping} {output.mapping} {output.dedup} {input.counts} --dedup-logs {input.dedup_logs} --trim-jsons {input.trim_jsons}
@@ -1457,10 +1453,6 @@ rule aggregate_multiqc_stats:
 
 
 rule generate_mapping_report:
-    benchmark:
-        BENCHDIR / "generate_mapping_report.benchmark.txt"
-    benchmark:
-        BENCHDIR / "generate_mapping_report.benchmark.txt"
     input:
         INTERNALDIR / "stats/multiqc/mapping_stats_mqc.tsv",
         INTERNALDIR / "stats/multiqc/dedup_stats_mqc.tsv",
@@ -1470,15 +1462,13 @@ rule generate_mapping_report:
         report_name="mapping.html",
         report_dir=str(Path("report_reads")),
         search_dir=str(INTERNALDIR / "stats/multiqc"),
+    benchmark:
+        BENCHDIR / "generate_mapping_report.benchmark.txt"
     shell:
         "{PATH.multiqc} -f --no-ansi -n {params.report_name} -o {params.report_dir} {params.search_dir}"
 
 
 rule generate_site_report:
-    benchmark:
-        BENCHDIR / "generate_site_report.benchmark.txt"
-    benchmark:
-        BENCHDIR / "generate_site_report.benchmark.txt"
     input:
         INTERNALDIR / "stats/multiqc_sites/motif_conversion_mqc.tsv",
         INTERNALDIR / "stats/multiqc_sites/site_summary_mqc.tsv",
@@ -1489,6 +1479,8 @@ rule generate_site_report:
         report_name="sites.html",
         report_dir=str(Path("report_sites")),
         search_dir=str(INTERNALDIR / "stats/multiqc_sites"),
+    benchmark:
+        BENCHDIR / "generate_site_report.benchmark.txt"
     shell:
         "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir}"
 
