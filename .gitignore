@@ -71,3 +71,7 @@ src/log_handler.py
 # Development build artifacts
 development/
 *.txt.resources
+development/skills/
+internal_files/
+.snakemake/
+*.sif
