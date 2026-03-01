@@ -157,6 +157,7 @@ rule all:
         "report_sites/filtered.tsv" if IS_ETAM else "report_sites/sites.tsv.gz",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
         INTERNALDIR / "README.md",
+        INTERNALDIR / "stats/ratio/probe.tsv" if HAS_GENES else [],
     benchmark:
         BENCHDIR / "all.benchmark.txt"
 
@@ -197,8 +198,6 @@ rule internal_readme:
 rule combine_contamination_fa:
     benchmark:
         BENCHDIR / "combine_contamination_fa.benchmark.txt"
-    benchmark:
-        BENCHDIR / "combine_contamination_fa.benchmark.txt"
     input:
         REF.get("contamination", []) if "contamination" in REF else [],
     output:
@@ -235,8 +234,6 @@ rule build_contamination_hisat3n_index:
 rule combine_genes_fa:
     benchmark:
         BENCHDIR / "combine_genes_fa.benchmark.txt"
-    benchmark:
-        BENCHDIR / "combine_genes_fa.benchmark.txt"
     input:
         REF.get("genes", []) if "genes" in REF else [],
     output:
@@ -251,8 +248,6 @@ rule combine_genes_fa:
 
 
 rule prepared_transcript_ref:
-    benchmark:
-        BENCHDIR / "prepared_transcript_ref.benchmark.txt"
     benchmark:
         BENCHDIR / "prepared_transcript_ref.benchmark.txt"
     input:
@@ -385,8 +380,6 @@ rule qc_trimmed:
 
 
 rule report_qc_trimmed:
-    benchmark:
-        BENCHDIR / "report_qc_trimmed.benchmark.txt"
     benchmark:
         BENCHDIR / "report_qc_trimmed.benchmark.txt"
     input:
@@ -1025,8 +1018,6 @@ rule unmapped_qc:
 rule unmapped_report:
     benchmark:
         BENCHDIR / "unmapped_report.benchmark.txt"
-    benchmark:
-        BENCHDIR / "unmapped_report.benchmark.txt"
     input:
         [
             INTERNALDIR / f"qc/fastqc_unmapped/{s}_{r}_{i}/fastqc_data.txt"
@@ -1293,7 +1284,7 @@ rule pileup_base:
     input:
         TEMPDIR / "pileup/{sample}.{reftype}.tsv",
     output:
-        INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
+        INTERNALDIR / "per_sample_pileup/{sample}.{reftype}.tsv.gz",
     threads: 16
     benchmark:
         BENCHDIR / "pileup_base_{sample}_{reftype}.benchmark.txt"
@@ -1302,14 +1293,12 @@ rule pileup_base:
 
 
 rule unfilter_genes_stat:
-    benchmark:
-        BENCHDIR / "unfilter_genes_stat_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "unfilter_genes_stat.benchmark.txt"
     input:
-        INTERNALDIR / "pileup/{sample}.{reftype}.tsv.gz",
+        INTERNALDIR / "per_sample_pileup/{sample}.{reftype}.tsv.gz",
     output:
         INTERNALDIR / "stats/{sample}.{reftype}.genes.tsv",
+    benchmark:
+        BENCHDIR / "unfilter_genes_stat_{sample}_{reftype}.benchmark.txt"
     shell:
         """
         zcat {input} | awk -F '\\t' 'NR>1 && $1!~"^probe_" && ($6+$9+$7+$10+0)>0{{u[$6]+=$6+$7; d[$1]+=$6+$9+$7+$10; r[$1]+=($6+$7)/($6+$9+$7+$10); n[$1]+=1}}END{{ for(x in u){{print x,n[x],u[x],d[x],r[x]/n[x]}} }}' > {output}
@@ -1317,30 +1306,24 @@ rule unfilter_genes_stat:
 
 
 rule motif_conversion_rate_stat:
-    benchmark:
-        BENCHDIR / "motif_conversion_rate_stat_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "motif_conversion_rate_stat.benchmark.txt"
     input:
-        pileup=INTERNALDIR / "pileup/{sample}.{reftype}.tsv.gz",
+        pileup=INTERNALDIR / "per_sample_pileup/{sample}.{reftype}.tsv.gz",
     output:
         INTERNALDIR / "stats/{sample}.{reftype}.motif.tsv",
+    benchmark:
+        BENCHDIR / "motif_conversion_rate_stat_{sample}_{reftype}.benchmark.txt"
     shell:
         'zcat {input.pileup} | awk -F \'\\t\' \'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio"}} NR>1 && ($6+$9+$7+$10+0)>0{{m=toupper(substr($4,15,3)); if(m ~ /^[ATGC]+$/){{n[m]+=1;u[m]+=$6+$7;d[m]+=$6+$9+$7+$10;r[m]+=($6+$7)/($6+$9+$7+$10)}}}} END{{for(m in d) print m,n[m],u[m],d[m],r[m]/n[m]}}\' > {output}'
 
 
 rule join_pileup_table:
-    benchmark:
-        BENCHDIR / "join_pileup_table_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "join_pileup_table.benchmark.txt"
     input:
         expand(
-            INTERNALDIR / "pileup/{sample}.{{reftype}}.tsv.gz",
+            INTERNALDIR / "per_sample_pileup/{sample}.{{reftype}}.tsv.gz",
             sample=SAMPLE2DATA.keys(),
         ),
     output:
-        "report_sites/{reftype}.tsv.gz",
+        INTERNALDIR / "pileup/{reftype}.tsv.gz",
     params:
         samples=" ".join(SAMPLE2DATA.keys()),
         requires=" ".join(
@@ -1354,6 +1337,8 @@ rule join_pileup_table:
             ]
         ),
     threads: lambda wildcards, input: min(int(len(input) * 4), 32)
+    benchmark:
+        BENCHDIR / "join_pileup_table_{reftype}.benchmark.txt"
     shell:
         """
         {PATH.merge_samples} --files {input} --names {params.samples} --output {output} --requires {params.requires}
@@ -1361,10 +1346,6 @@ rule join_pileup_table:
 
 
 rule merge_gene_and_genome_table:
-    benchmark:
-        BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
-    benchmark:
-        BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
     input:
         info=INTERNALDIR / "ref/transcript.tsv",
         transcripts=INTERNALDIR / "pileup/transcript.tsv.gz",
@@ -1372,6 +1353,8 @@ rule merge_gene_and_genome_table:
     output:
         "report_sites/sites.tsv.gz",
     threads: 16
+    benchmark:
+        BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
     shell:
         """
         {PATH.remap_genome} -t {input.info} -a {input.transcripts} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
@@ -1379,8 +1362,6 @@ rule merge_gene_and_genome_table:
 
 
 rule filter_eTAM_sites:
-    benchmark:
-        BENCHDIR / "filter_eTAM_sites.benchmark.txt"
     benchmark:
         BENCHDIR / "filter_eTAM_sites.benchmark.txt"
     input:
