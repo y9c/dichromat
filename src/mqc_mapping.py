@@ -8,7 +8,6 @@ import json
 
 def parse_dedup_log(f):
     """Parse markdup log file for key metrics"""
-    # Filename format: {sample}.{reftype}.log
     basename = os.path.basename(f)
     parts = basename.split('.')
     sample = parts[0]
@@ -18,13 +17,15 @@ def parse_dedup_log(f):
     try:
         with open(f, 'r') as fh:
             content = fh.read()
-            m_total = re.search(r"Total reads processed: (\d+)", content)
-            m_dup = re.search(r"Duplicates removed: (\d+)", content)
-            m_unique = re.search(r"Total Unique Reads: (\d+)", content)
+            # Use [0-9,]+ to handle thousands separators, then strip commas
+            m_total = re.search(r"Total reads processed: ([0-9,]+)", content)
+            m_dup = re.search(r"Duplicates removed: ([0-9,]+)", content)
+            m_unique = re.search(r"Total Unique Reads: ([0-9,]+)", content)
             m_rate = re.search(r"Deduplication rate: ([\d\.]+)%", content)
-            if m_total: stats['Total_Reads'] = int(m_total.group(1))
-            if m_dup: stats['Duplicates'] = int(m_dup.group(1))
-            if m_unique: stats['Unique_Reads'] = int(m_unique.group(1))
+            
+            if m_total: stats['Total_Reads'] = int(m_total.group(1).replace(',', ''))
+            if m_dup: stats['Duplicates'] = int(m_dup.group(1).replace(',', ''))
+            if m_unique: stats['Unique_Reads'] = int(m_unique.group(1).replace(',', ''))
             if m_rate: stats['Duplication_Rate'] = float(m_rate.group(1))
     except Exception as e:
         print(f"Warning: Could not parse dedup log {f}: {e}")
@@ -72,37 +73,37 @@ def main():
             df_trim = pl.DataFrame([parse_trim_json(f) for f in args.trim_jsons])
             df_mapping = df_mapping.join(df_trim, on="Sample", how="left")
 
-        # Table Header
+        # Config for Mapping Throughput Plot
         header_mapping = [
             "# id: mapping_stats_table",
             "# section_name: 'Pipeline Mapping Statistics'",
-            "# description: 'Read counts at each stage. Passed columns show effective mapping; Dedup columns show reads after duplication removal.'",
+            "# description: 'Read counts at each stage. Note: These are nested metrics (Clean < Raw, Passed < Clean, Dedup < Passed).'",
             "# plot_type: 'table'",
             "# pconfig:",
             "#    namespace: 'Mapping'",
-        ]
-        
-        # Add a graphical bar plot for the same data
-        header_mapping.extend([
+            "#    format: '{:,.0f}'",
+            "#    col_config:",
+            "#        Trimmed_Pct: {suffix: '%', scale: 'Purples', format: '{:.1f}'}",
             "# id: mapping_stats_plot",
-            "# section_name: 'Mapping Throughput'",
+            "# section_name: 'Mapping Throughput Graph'",
+            "# description: 'Visual comparison of read counts at different stages. Columns are grouped (not stacked) to show the reduction at each step.'",
             "# plot_type: 'bargraph'",
             "# pconfig:",
             "#    id: 'mapping_stats_bargraph'",
             "#    title: 'Mapping Throughput'",
             "#    ylab: 'Number of Reads'",
-        ])
+            "#    stacking: false", # Key fix: prevent adding them up
+        ]
 
         with open(args.mapping_output, 'w') as f_out:
             f_out.write("\n".join(header_mapping) + "\n")
             df_mapping.write_csv(f_out, separator='\t', include_header=True)
 
-    # 2. Deduplication Statistics (All Types)
+    # 2. Deduplication Statistics
     if args.dedup_logs:
         dedup_data = [parse_dedup_log(f) for f in args.dedup_logs]
         if dedup_data:
             df_dedup = pl.DataFrame(dedup_data)
-            # Create a combined Sample_Type key for display
             df_dedup = df_dedup.with_columns(
                 pl.format("{}_{}", pl.col("Sample"), pl.col("Type")).alias("Sample_Library")
             ).select(["Sample_Library", "Total_Reads", "Unique_Reads", "Duplicates", "Duplication_Rate"])
@@ -114,6 +115,7 @@ def main():
                 "# plot_type: 'table'",
                 "# pconfig:",
                 "#    namespace: 'Deduplication'",
+                "#    format: '{:,.0f}'",
                 "#    col_config:",
                 "#        Duplication_Rate: {suffix: '%', scale: 'YlOrRd', format: '{:.2f}'}",
             ]

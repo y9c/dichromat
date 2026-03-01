@@ -158,7 +158,7 @@ rule all:
         "report_reads/trimmed.html",
         "report_reads/unmapped.html",
         "report_sites/sites.html",
-        "report_sites/filtered.tsv" if IS_ETAM else "report_sites/merged.tsv.gz",
+        "report_sites/filtered.tsv" if IS_ETAM else "report_sites/sites.tsv.gz",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
         INTERNALDIR / "README.md",
 
@@ -213,22 +213,22 @@ rule combine_contamination_fa:
 
 
 rule build_contamination_hisat3n_index:
-    benchmark:
-        BENCHDIR / "build_contamination_hisat3n_index.benchmark.txt"
-    benchmark:
-        BENCHDIR / "build_contamination_hisat3n_index.benchmark.txt"
     input:
         INTERNALDIR / "ref/contamination.fa",
     output:
-        INTERNALDIR / "ref/contamination.3n.GA.1.ht2",
+        INTERNALDIR / "ref/contamination/index.indexed",
     params:
         basechange=config.get("base_change", "A,G"),
-        prefix=str(INTERNALDIR / "ref/contamination"),
+        prefix=str(INTERNALDIR / "ref/contamination/index"),
     threads: 8
+    benchmark:
+        BENCHDIR / "build_contamination_hisat3n_index.benchmark.txt"
     shell:
         """
+        mkdir -p $(dirname {params.prefix})
         rm -f {params.prefix}*.ht2
         {PATH.hisat3nbuild} -p {threads} --base-change {params.basechange} {input} {params.prefix}
+        touch {output}
         """
 
 
@@ -289,7 +289,7 @@ rule trim_se:
             if SAMPLE2LIB[wildcards.sample]
             else f"-a '{SAMPLE2ADP[wildcards.sample]}'"
         ),
-    threads: 24
+    threads: 8
     shell:
         """
         {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -s {output.s} --json-file {output.report} {input} 
@@ -317,7 +317,7 @@ rule trim_pe:
             if SAMPLE2LIB[wildcards.sample]
             else f"-a '{SAMPLE2ADP[wildcards.sample]}'"
         ),
-    threads: 24
+    threads: 8
     shell:
         """
         {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} -p {output.c2} -s {output.s1} -S {output.s2} --json-file {output.report} {input.r1} {input.r2}
@@ -406,20 +406,16 @@ rule report_qc_trimmed:
 
 
 rule premap_align_pe:
-    benchmark:
-        BENCHDIR / "premap_align_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "premap_align_pe.benchmark.txt"
     input:
         fq1=TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz",
         fq2=TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz",
-        idx=INTERNALDIR / "ref/contamination.3n.GA.1.ht2",
+        idx=INTERNALDIR / "ref/contamination/index.indexed",
     output:
         mapped=temp(TEMPDIR / "premap/PE/{sample}_{rn}.contam.bam"),
         unmapped=temp(TEMPDIR / "premap/PE/{sample}_{rn}.unmap.bam"),
         summary=temp(TEMPDIR / "premap/PE/{sample}_{rn}.summary"),
     params:
-        index=str(INTERNALDIR / "ref/contamination"),
+        index=str(INTERNALDIR / "ref/contamination/index"),
         basechange=config.get("base_change", "A,G"),
         directional=lambda wildcards: (
             ""
@@ -431,7 +427,9 @@ rule premap_align_pe:
             if SPLICE_CONTAM
             else "--no-spliced-alignment"
         ),
-    threads: 36
+    threads: 16
+    benchmark:
+        BENCHDIR / "premap_align_pe_{sample}_{rn}.benchmark.txt"
     shell:
         """
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.directional} {params.splice_args} \
@@ -441,19 +439,15 @@ rule premap_align_pe:
 
 
 rule premap_align_se:
-    benchmark:
-        BENCHDIR / "premap_align_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "premap_align_se.benchmark.txt"
     input:
         fq=TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz",
-        idx=INTERNALDIR / "ref/contamination.3n.GA.1.ht2",
+        idx=INTERNALDIR / "ref/contamination/index.indexed",
     output:
         mapped=temp(TEMPDIR / "premap/SE/{sample}_{rn}.contam.bam"),
         unmapped=temp(TEMPDIR / "premap/SE/{sample}_{rn}.unmap.bam"),
         summary=temp(TEMPDIR / "premap/SE/{sample}_{rn}.summary"),
     params:
-        index=str(INTERNALDIR / "ref/contamination"),
+        index=str(INTERNALDIR / "ref/contamination/index"),
         basechange=config.get("base_change", "A,G"),
         directional=lambda wildcards: (
             ""
@@ -465,7 +459,9 @@ rule premap_align_se:
             if SPLICE_CONTAM
             else "--no-spliced-alignment"
         ),
-    threads: 36
+    threads: 16
+    benchmark:
+        BENCHDIR / "premap_align_se_{sample}_{rn}.benchmark.txt"
     shell:
         """
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.directional} {params.splice_args} \
@@ -532,7 +528,7 @@ rule finalize_premap_bam:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.contamination.bam",
-    threads: 36
+    threads: 16
     priority: 4
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
@@ -572,11 +568,32 @@ rule premap_get_unmapped_se:
 # main mapping step (genes and transcript simutaneously if genes provided, otherwise just transcript)
 
 
+rule build_mainmap_index:
+    input:
+        rf1=lambda wildcards: INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
+        rf2=INTERNALDIR / "ref/transcript.fa",
+    output:
+        idx2=INTERNALDIR / "ref/transcript/index.indexed",
+        **({"idx1": INTERNALDIR / "ref/genes/index.indexed"} if HAS_GENES else {})
+    benchmark:
+        BENCHDIR / "build_mainmap_index.benchmark.txt"
+    shell:
+        """
+        # Index transcript
+        mkdir -p {INTERNALDIR}/ref/transcript
+        {PATH.coralsnake} map --index-only --index-dir {INTERNALDIR}/ref/transcript -r {input.rf2}
+        touch {output.idx2}
+        
+        # Index genes if provided
+        if [ "{HAS_GENES}" == "True" ]; then
+            mkdir -p {INTERNALDIR}/ref/genes
+            {PATH.coralsnake} map --index-only --index-dir {INTERNALDIR}/ref/genes -r {input.rf1}
+            touch {INTERNALDIR}/ref/genes/index.indexed
+        fi
+        """
+
+
 rule mainmap_align_pe:
-    benchmark:
-        BENCHDIR / "mainmap_align_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "mainmap_align_pe.benchmark.txt"
     input:
         fq1=lambda wildcards: (
             TEMPDIR / f"unmapped/premap/PE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
@@ -590,26 +607,26 @@ rule mainmap_align_pe:
         ),
         rf1=lambda wildcards: INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
         rf2=INTERNALDIR / "ref/transcript.fa",
+        idx1=lambda wildcards: [INTERNALDIR / "ref/genes/index.indexed"] if HAS_GENES else [],
+        idx2=INTERNALDIR / "ref/transcript/index.indexed",
     output:
         mp2=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.transcript.bam"),
         um=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam"),
         summary=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.summary"),
-        **({"mp1": temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.genes.bam")} if HAS_GENES else {})
-    threads: 48
+        mp1=[temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
+    threads: 16
+    benchmark:
+        BENCHDIR / "mainmap_align_pe_{sample}_{rn}.benchmark.txt"
     shell:
         "{PATH.coralsnake} map -t {threads} "
-        + ("-r {input.rf1} " if HAS_GENES else "")
-        + "-r {input.rf2} -1 {input.fq1} -2 {input.fq2} "
+        + ("--index-dir {INTERNALDIR}/ref/genes -r {input.rf1} " if HAS_GENES else "")
+        + "--index-dir {INTERNALDIR}/ref/transcript -r {input.rf2} -1 {input.fq1} -2 {input.fq2} "
         + ("-o {output.mp1} " if HAS_GENES else "")
         + "-o {output.mp2} -u {output.um} && "
         "touch {output.summary}"
 
 
 rule mainmap_align_se:
-    benchmark:
-        BENCHDIR / "mainmap_align_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "mainmap_align_se.benchmark.txt"
     input:
         fq=lambda wildcards: (
             TEMPDIR / f"unmapped/premap/SE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
@@ -618,16 +635,20 @@ rule mainmap_align_se:
         ),
         rf1=lambda wildcards: INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
         rf2=INTERNALDIR / "ref/transcript.fa",
+        idx1=lambda wildcards: [INTERNALDIR / "ref/genes/index.indexed"] if HAS_GENES else [],
+        idx2=INTERNALDIR / "ref/transcript/index.indexed",
     output:
         mp2=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.transcript.bam"),
         um=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam"),
         summary=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.summary"),
-        **({"mp1": temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.genes.bam")} if HAS_GENES else {})
-    threads: 48
+        mp1=[temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
+    threads: 16
+    benchmark:
+        BENCHDIR / "mainmap_align_se_{sample}_{rn}.benchmark.txt"
     shell:
         "{PATH.coralsnake} map -t {threads} "
-        + ("-r {input.rf1} " if HAS_GENES else "")
-        + "-r {input.rf2} -1 {input.fq} "
+        + ("--index-dir {INTERNALDIR}/ref/genes -r {input.rf1} " if HAS_GENES else "")
+        + "--index-dir {INTERNALDIR}/ref/transcript -r {input.rf2} -1 {input.fq} "
         + ("-o {output.mp1} " if HAS_GENES else "")
         + "-o {output.mp2} -u {output.um} && "
         "touch {output.summary}"
@@ -650,18 +671,18 @@ rule finalize_mainmap_summary:
         "cp {input} {output}"
 
 
-if HAS_GENES:
-    rule finalize_mainmap_genes_bam:
-        input:
-            lambda wildcards: (
-                TEMPDIR
-                / f"mainmap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genes.bam"
-            ),
-        output:
-            INTERNALDIR / "bam/per_run/{sample}_{rn}.genes.bam",
-        threads: 32
-        shell:
-            "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
+rule finalize_mainmap_genes_bam:
+    input:
+        lambda wildcards: (
+            TEMPDIR
+            / f"mainmap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genes.bam"
+            if HAS_GENES else []
+        ),
+    output:
+        INTERNALDIR / "bam/per_run/{sample}_{rn}.genes.bam",
+    threads: 12
+    shell:
+        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
 rule finalize_mainmap_transcript_bam:
@@ -676,7 +697,7 @@ rule finalize_mainmap_transcript_bam:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.transcript.bam",
-    threads: 32
+    threads: 12
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
@@ -739,7 +760,7 @@ rule remap_align_pe:
             if SPLICE_GENOME
             else "--no-spliced-alignment"
         ),
-    threads: 36
+    threads: 16
     shell:
         """
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.directional} {params.splice_args} \
@@ -771,7 +792,7 @@ rule remap_align_se:
             if SPLICE_GENOME
             else "--no-spliced-alignment"
         ),
-    threads: 36
+    threads: 16
     shell:
         """
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.directional} {params.splice_args} \
@@ -838,7 +859,7 @@ rule remap_tag_pe:
         strand=lambda wildcards: (
             "0" if SAMPLE2LIB[wildcards.sample] == "UNSTRANDED" else "1"
         ),
-    threads: 32
+    threads: 12
     shell:
         "{PATH.bam_tag} {input} {output} --threads {threads} --strand-type {params.strand}"
 
@@ -856,7 +877,7 @@ rule remap_tag_se:
         strand=lambda wildcards: (
             "0" if SAMPLE2LIB[wildcards.sample] == "UNSTRANDED" else "1"
         ),
-    threads: 32
+    threads: 12
     shell:
         "{PATH.bam_tag} {input} {output} --threads {threads} --strand-type {params.strand}"
 
@@ -872,7 +893,7 @@ rule remap_filter_sort_pe:
         unmap=temp(TEMPDIR / "remap/PE/{sample}_{rn}.final_unmap.bam"),
         mapped=temp(TEMPDIR / "remap/PE/{sample}_{rn}.mapped.bam"),
         report=temp(TEMPDIR / "remap/PE/{sample}_{rn}.report.json"),
-    threads: 32
+    threads: 12
     shell:
         """
         {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmap} --save-counts {output.report} -h {input} |\
@@ -891,7 +912,7 @@ rule remap_filter_sort_se:
         unmap=temp(TEMPDIR / "remap/SE/{sample}_{rn}.final_unmap.bam"),
         mapped=temp(TEMPDIR / "remap/SE/{sample}_{rn}.mapped.bam"),
         report=temp(TEMPDIR / "remap/SE/{sample}_{rn}.report.json"),
-    threads: 32
+    threads: 12
     shell:
         """
         {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmap} --save-counts {output.report} -h {input} |\
@@ -1032,13 +1053,13 @@ rule combine_bams:
         BENCHDIR / "combine_bams.benchmark.txt"
     input:
         lambda wildcards: [
-            INTERNALDIR / f"run_bam/{wildcards.sample}_{r}.{wildcards.reftype}.bam"
+            INTERNALDIR / f"bam/per_run/{wildcards.sample}_{r}.{wildcards.reftype}.bam"
             for r in SAMPLE2DATA[wildcards.sample]
         ],
     output:
         bam=temp(TEMPDIR / "combined/{sample}.{reftype}.bam"),
         bai=temp(TEMPDIR / "combined/{sample}.{reftype}.bam.bai"),
-    threads: 32
+    threads: 12
     shell:
         """
         {PATH.samtools} merge -@ {threads} -f --write-index -o {output.bam}##idx##{output.bai} {input}
@@ -1074,7 +1095,7 @@ rule drop_duplicates:
     output:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
         txt=INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
-    threads: 48
+    threads: 16
     shell:
         "{PATH.markdup} -t {threads} -i {input.bam} -o {output.bam} --report {output.txt}"
 
@@ -1088,7 +1109,7 @@ rule dedup_index:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
         bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
-    threads: 12
+    threads: 8
     shell:
         "{PATH.samtools} index -@ {threads} {input}"
 
@@ -1125,7 +1146,7 @@ rule liftover_transcript_to_genome:
         bam=INTERNALDIR / "liftover_bam/{sample}.bam",
     params:
         fai=REF["genome"]["fa"] + ".fai",
-    threads: 24
+    threads: 8
     shell:
         """
         coralsnake liftover -t {threads} -i {input.transcripts} -o {output.transcripts} -a {input.info} -f {params.fai}
@@ -1260,7 +1281,7 @@ rule run_countmut:
         ),
     output:
         temp(TEMPDIR / "pileup/{sample}.{reftype}.tsv"),
-    threads: 32
+    threads: 12
     params:
         ref_base=lambda wildcards: "C" if config.get("pileup_ct", False) else "A",
         mut_base=lambda wildcards: "T" if config.get("pileup_ct", False) else "G",
@@ -1334,7 +1355,7 @@ rule join_pileup_table:
                 for s in SAMPLE2DATA.keys()
             ]
         ),
-    threads: lambda wildcards, input: min(int(len(input) * 4), 64)
+    threads: lambda wildcards, input: min(int(len(input) * 4), 32)
     shell:
         """
         {PATH.merge_samples} --files {input} --names {params.samples} --output {output} --requires {params.requires}
@@ -1351,8 +1372,8 @@ rule merge_gene_and_genome_table:
         transcripts="report_sites/transcript.tsv.gz",
         genome="report_sites/genome.tsv.gz",
     output:
-        "report_sites/merged.tsv.gz",
-    threads: 48
+        "report_sites/sites.tsv.gz",
+    threads: 16
     shell:
         """
         {PATH.remap_genome} -t {input.info} -a {input.transcripts} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
@@ -1365,10 +1386,10 @@ rule filter_eTAM_sites:
     benchmark:
         BENCHDIR / "filter_eTAM_sites.benchmark.txt"
     input:
-        "report_sites/merged.tsv.gz",
+        "report_sites/sites.tsv.gz",
     output:
         fl="report_sites/filtered.tsv",
-    threads: 48
+    threads: 16
     shell:
         """
         {PATH.filter_sites} -i {input} -o {output.fl}
@@ -1381,12 +1402,12 @@ rule group_and_pval_cal:
     benchmark:
         BENCHDIR / "group_and_pval_cal.benchmark.txt"
     input:
-        "report_sites/merged.tsv.gz",
+        "report_sites/sites.tsv.gz",
     output:
         "report_sites/grouped/{group}.parquet",
     params:
         names=lambda wildcards: GROUP2SAMPLE[wildcards.group],
-    threads: 24
+    threads: 8
     shell:
         """
         {PATH.sum_groups} -i {input} -o {output} -n {params.names}
@@ -1421,14 +1442,17 @@ rule aggregate_multiqc_stats:
             sample=SAMPLE2DATA.keys(),
             rn=["run1"],
         ),
+        sites_file="report_sites/sites.tsv.gz" if IS_ETAM else [],
     output:
         mapping=INTERNALDIR / "stats/multiqc/mapping_stats_mqc.tsv",
         motifs=INTERNALDIR / "stats/multiqc_sites/motif_conversion_mqc.tsv",
+        site_sum=INTERNALDIR / "stats/multiqc_sites/site_summary_mqc.tsv",
+        site_dist=INTERNALDIR / "stats/multiqc_sites/site_distribution_mqc.tsv",
         dedup=INTERNALDIR / "stats/multiqc/dedup_stats_mqc.tsv",
     shell:
         """
         {PATH.mqc_mapping} {output.mapping} {output.dedup} {input.counts} --dedup-logs {input.dedup_logs} --trim-jsons {input.trim_jsons}
-        {PATH.mqc_sites} {output.motifs} {input.motifs}
+        {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} --motif-files {input.motifs} --sites-file {input.sites_file}
         """
 
 
@@ -1457,6 +1481,8 @@ rule generate_site_report:
         BENCHDIR / "generate_site_report.benchmark.txt"
     input:
         INTERNALDIR / "stats/multiqc_sites/motif_conversion_mqc.tsv",
+        INTERNALDIR / "stats/multiqc_sites/site_summary_mqc.tsv",
+        INTERNALDIR / "stats/multiqc_sites/site_distribution_mqc.tsv",
     output:
         "report_sites/sites.html",
     params:

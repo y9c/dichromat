@@ -80,7 +80,7 @@ def remap_and_join_files(
     # Read gene df
     logging.info("Reading transcript pileup")
     df1 = (
-        pl.scan_csv(gene_df_file, separator="\t", has_header=True)
+        pl.scan_csv(gene_df_file, separator="\t", has_header=True, infer_schema_length=None)
         .with_columns([
             pl.col("Chrom").cast(pl.Utf8),
             pl.col("Pos").cast(pl.UInt32),
@@ -94,19 +94,6 @@ def remap_and_join_files(
     
     # Vectorized mapping using a join
     logging.info("Vectorized liftover to genomic coordinates")
-    
-    # Check for unmapped genes (gene IDs not in reference)
-    unmatched_count = df1.join(
-        exons_df.select("GeneName").unique(), 
-        on="GeneName", 
-        how="anti"
-    ).shape[0]
-    if unmatched_count > 0:
-        logging.warning(
-            f"{unmatched_count} transcript positions have GeneName not found in "
-            f"reference file. These will be kept as-is (GeneName used as Chrom). "
-            f"This may indicate a mismatch between annotation versions."
-        )
     
     df1 = (
         df1.join(exons_df, on="GeneName", how="left")
@@ -145,18 +132,13 @@ def remap_and_join_files(
     )
     
     logging.info(f"Loaded and mapped {len(df1)} transcript positions.")
-    
-    if len(df1) == 0:
-        logging.warning(
-            "No transcript positions could be mapped to genomic coordinates. "
-            "Output will contain only genome positions."
-        )
 
     # Read genome df
     df2 = pl.scan_csv(
         genome_df_file,
         separator="\t",
         has_header=True,
+        infer_schema_length=None,
         schema_overrides={
             "Chrom": pl.String,
             "Pos": pl.UInt32,
@@ -219,5 +201,5 @@ if __name__ == "__main__":
 
     df = remap_and_join_files(
         args.gene_file, args.genome_file, args.transcript_file, args.output_file,
-        min_depth=args.min_depth
+        args.min_depth
     )

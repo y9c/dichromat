@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18803090.svg)](https://doi.org/10.5281/zenodo.18803090)
 
-`dichromat` is an ultra-fast, containerized pipeline for m6A eTAM-seq data analysis. It handles everything from competitive mapping to site-calling and aggregated reporting.
+`dichromat` is a general, containerized pipeline for conversion sequencing of RNA modifications (e.g., eTAM-seq, CAM-seq, GLORI, BS-seq). It handles everything from competitive mapping to site-calling and aggregated reporting.
 
 ## 📋 Requirements
 
