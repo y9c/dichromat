@@ -6,7 +6,7 @@
 
 set -e
 
-SIF_NAME="${1:-${SIF_NAME:-dichromat.sif}}"
+SIF_NAME="${1:-development/dichromat.sif}"
 VM_SCRIPT="${VM_SCRIPT:-/data/share/vm/submit_vm.sh}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/id_vm_rsa}"
 VM_ACCOUNT="${VM_ACCOUNT:-lab-changye}"
@@ -14,7 +14,7 @@ VM_CPUS="${VM_CPUS:-128}"
 VM_MEM="${VM_MEM:-400G}"
 BUILD_DIR="pipeline_build"
 
-PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
 cd "$PROJECT_DIR"
 
 # Colors
@@ -27,6 +27,9 @@ NC='\033[0m'
 echo -e "${GREEN}🚀 Starting VM-based build process...${NC}"
 echo -e "${BLUE}   Project: $PROJECT_DIR${NC}"
 echo -e "${BLUE}   Output: $SIF_NAME${NC}"
+
+# Ensure output dir exists
+mkdir -p "$(dirname "$SIF_NAME")"
 
 # Step 1: Submit VM job
 echo -e "${YELLOW}📤 Submitting VM job to SLURM...${NC}"
@@ -84,7 +87,7 @@ while true; do
     sleep 10
 done
 
-# Step 3: Sync code to VM
+# Step 3: Sync code to VM (only files needed for Docker build)
 echo -e "${YELLOW}📤 Syncing code to VM...${NC}"
 rsync -avz --progress \
     -e "ssh -p $PORT -i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=30" \
@@ -99,7 +102,8 @@ rsync -avz --progress \
     --exclude '*.log' \
     --exclude 'dichromat_LOG_*.txt' \
     --exclude '__pycache__' \
-    --exclude 'development/skills/' \
+    --exclude '.venv/' \
+    --exclude 'development/' \
     . "ubuntu@$NODE:~/$BUILD_DIR/"
 
 if [ $? -ne 0 ]; then
@@ -107,6 +111,8 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 echo -e "${GREEN}✅ Code synced${NC}"
+
+REMOTE_SIF_NAME=$(basename "$SIF_NAME")
 
 # Step 4: Build Docker image on VM
 echo -e "${YELLOW}🐳 Building Docker image on VM...${NC}"
@@ -122,7 +128,7 @@ echo -e "${GREEN}✅ Docker build complete${NC}"
 # Step 5: Convert to SIF
 echo -e "${YELLOW}📦 Converting to SIF...${NC}"
 ssh -p "$PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=30 "ubuntu@$NODE" \
-    "cd $BUILD_DIR && sudo apptainer build --force $SIF_NAME docker-daemon://dichromat:latest 2>&1"
+    "cd $BUILD_DIR && sudo apptainer build --force $REMOTE_SIF_NAME docker-daemon://dichromat:latest 2>&1"
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}❌ SIF conversion failed${NC}"
@@ -134,7 +140,7 @@ echo -e "${GREEN}✅ SIF created on VM${NC}"
 echo -e "${YELLOW}📥 Downloading SIF file...${NC}"
 rsync -avz --progress \
     -e "ssh -p $PORT -i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=30" \
-    "ubuntu@$NODE:~/$BUILD_DIR/$SIF_NAME" "./$SIF_NAME"
+    "ubuntu@$NODE:~/$BUILD_DIR/$REMOTE_SIF_NAME" "./$SIF_NAME"
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}❌ Failed to download SIF${NC}"

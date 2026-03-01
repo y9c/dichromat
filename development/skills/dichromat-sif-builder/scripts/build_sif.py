@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).parent.parent
-PROJECT_ROOT = SKILL_DIR.parent.parent
+# SKILL_DIR is development/skills/dichromat-sif-builder
+# PROJECT_ROOT is 3 levels up: skills -> development -> project root
+PROJECT_ROOT = SKILL_DIR.parent.parent.parent
 
 
 def check_fakeroot():
@@ -28,18 +30,18 @@ def check_fakeroot():
         return False
 
 
-def run_local_build():
+def run_local_build(output):
     """Run local fakeroot build"""
     script = SKILL_DIR / "scripts" / "build_local.sh"
     print("🔧 Running local build with fakeroot...")
-    return subprocess.run(["bash", str(script)], cwd=PROJECT_ROOT).returncode
+    return subprocess.run(["bash", str(script), str(output)], cwd=PROJECT_ROOT).returncode
 
 
-def run_vm_build():
+def run_vm_build(output):
     """Run VM-based build"""
     script = SKILL_DIR / "scripts" / "build_vm.sh"
     print("🖥️  Running VM-based build...")
-    return subprocess.run(["bash", str(script)], cwd=PROJECT_ROOT).returncode
+    return subprocess.run(["bash", str(script), str(output)], cwd=PROJECT_ROOT).returncode
 
 
 def main():
@@ -52,8 +54,8 @@ def main():
     )
     parser.add_argument(
         "--output",
-        default="dichromat.sif",
-        help="Output SIF filename (default: dichromat.sif)"
+        default="development/dichromat.sif",
+        help="Output SIF filename relative to project root (default: development/dichromat.sif)"
     )
     
     args = parser.parse_args()
@@ -70,17 +72,30 @@ def main():
             print("⚠️  Fakeroot not available - using VM build")
             method = "vm"
     
+    # Ensure output directory exists
+    output_path = Path(args.output)
+    if output_path.parent:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
     # Execute build
     if method == "local":
-        ret = run_local_build()
+        ret = run_local_build(args.output)
     else:
-        ret = run_vm_build()
+        ret = run_vm_build(args.output)
     
     # Check result
     sif_path = PROJECT_ROOT / args.output
     if ret == 0 and sif_path.exists():
         size = sif_path.stat().st_size / (1024 * 1024)  # MB
         print(f"\n✅ Build successful: {args.output} ({size:.1f} MB)")
+        
+        # Suggest Zenodo upload
+        zenodo_script = PROJECT_ROOT / "development" / "scripts" / "upload_to_zenodo.py"
+        if zenodo_script.exists():
+            print("\n📤 To upload to Zenodo, run:")
+            print("   export ZENODO_TOKEN=your_token_here")
+            print("   cd development/scripts && uv run python upload_to_zenodo.py")
+            
         return 0
     else:
         print(f"\n❌ Build failed")

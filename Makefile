@@ -7,7 +7,7 @@ DOCKER_ORG=y9c
 DOCKER_IMAGE=ghcr.io/$(DOCKER_ORG)/$(NAME)
 
 # Files
-SIF_FILE=$(NAME).sif
+SIF_FILE=development/$(NAME).sif
 DEF_FILE=$(NAME).def
 DOCKER_FILE=Dockerfile
 

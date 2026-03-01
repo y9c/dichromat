@@ -6,10 +6,12 @@
 
 set -e
 
-SIF_NAME="${SIF_NAME:-dichromat.sif}"
-PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+SIF_NAME="${1:-development/dichromat.sif}"
+PROJECT_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
 
 cd "$PROJECT_DIR"
+
+mkdir -p "$(dirname "$SIF_NAME")"
 
 echo "🐳 Building Docker image..."
 docker build -t dichromat:latest .

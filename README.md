@@ -23,7 +23,7 @@ apptainer build dichromat.sif docker://ghcr.io/y9c/dichromat:latest
 
 <sub>*If you have networking issues accessing Docker Hub (especially in China), download the pre-built SIF directly:*</sub>
 ```bash
-wget -O dichromat.sif "https://zenodo.org/records/18803090/files/dichromat.sif"
+wget -O dichromat.sif "https://zenodo.org/api/records/18821558/draft/files/dichromat.sif/content"
 ```
 
 ### 2. Configure Your Run

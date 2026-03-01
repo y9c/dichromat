@@ -34,7 +34,7 @@ apptainer build --fakeroot test.sif docker://alpine:latest 2>/dev/null && echo "
 bash development/skills/dichromat-sif-builder/scripts/build_local.sh
 ```
 
-**Output**: `dichromat.sif` in project root
+**Output**: `development/dichromat.sif`
 
 ### Method 2: VM Build (No Root Required)
 
@@ -54,14 +54,14 @@ bash development/skills/dichromat-sif-builder/scripts/build_vm.sh
 6. Downloads SIF back
 7. Cleans up VM
 
-**Output**: `dichromat.sif` in project root
+**Output**: `development/dichromat.sif`
 
 ## Makefile Integration
 
 Add to your Makefile:
 
 ```makefile
-SIF_FILE := dichromat.sif
+SIF_FILE := development/dichromat.sif
 BUILD_SCRIPT := development/skills/dichromat-sif-builder/scripts/build_sif.py
 
 # Auto-detect best build method
@@ -86,6 +86,15 @@ sif-check:
 	fi
 ```
 
+## Uploading to Zenodo
+
+Once built, you can upload the newly built SIF image to Zenodo:
+
+```bash
+export ZENODO_TOKEN=your_token_here
+cd development/scripts && uv run python upload_to_zenodo.py
+```
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -98,7 +107,7 @@ sif-check:
 ## Configuration
 
 Environment variables:
-- `SIF_NAME`: Output filename (default: `dichromat.sif`)
+- `SIF_NAME`: Output filename (default: `development/dichromat.sif`)
 - `VM_ACCOUNT`: SLURM account (default: `lab-changye`)
 - `VM_CPUS`: VM CPU cores (default: `128`)
 - `VM_MEM`: VM memory (default: `400G`)
