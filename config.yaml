@@ -9,10 +9,9 @@ skip_samples:
   - "sample1-FTO"
   - "sample1-IVT"
 
-# Custom adapter sequence (passed to cutseq -a)
+# IMPORTANT! Custom adapter sequence (passed to cutseq -a)
 # If libtype is provided, this sequence is typically ignored by the logic
 adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
-
 # Alternatively, select a built-in adapter name (passed to cutseq -A)
 # libtype: "TAKARAv3"
 

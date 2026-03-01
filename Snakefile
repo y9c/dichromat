@@ -1235,23 +1235,22 @@ rule read_length:
 ###################
 
 
-if HAS_GENES:
-    rule cal_spike_ratio:
-        input:
-            bam=expand(
-                INTERNALDIR / "bam/{sample}.genes.bam", sample=SAMPLE2DATA.keys()
-            ),
-            bai=expand(
-                INTERNALDIR / "bam/{sample}.genes.bam.bai",
-                sample=SAMPLE2DATA.keys(),
-            ),
-        output:
-            tsv=INTERNALDIR / "stats/ratio/probe.tsv",
-        threads: 8
-        shell:
-            """
-            {PATH.bam_conv} {input.bam} > {output}
-            """
+rule cal_spike_ratio:
+    input:
+        bam=lambda wildcards: expand(
+            INTERNALDIR / "bam/{sample}.genes.bam", sample=SAMPLE2DATA.keys()
+        ) if HAS_GENES else [],
+        bai=lambda wildcards: expand(
+            INTERNALDIR / "bam/{sample}.genes.bam.bai",
+            sample=SAMPLE2DATA.keys(),
+        ) if HAS_GENES else [],
+    output:
+        tsv=INTERNALDIR / "stats/ratio/probe.tsv",
+    threads: 8
+    shell:
+        """
+        {PATH.bam_conv} {input.bam} > {output}
+        """
 
 
 rule run_countmut:

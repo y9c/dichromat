@@ -2,11 +2,6 @@
 is_etam: false
 skip_samples: []
 
-# Default built-in adapter name (passed to cutseq -A)
-libtype: "TAKARAV3"
-# Default custom adapter sequence (passed to cutseq -a if libtype is empty)
-adapter: ""
-
 path:
   python: "python"
   samtools: "samtools"
