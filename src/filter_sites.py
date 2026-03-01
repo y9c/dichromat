@@ -309,7 +309,7 @@ if __name__ == "__main__":
         schema={
             "library": pl.String,
             "Motif3": pl.String,
-            "GC": pl.Float32,
+            "GC": pl.Float64,
             "bg": pl.Float64,
         },
     ).pivot(index=["Motif3", "GC"], on="library", values="bg")
