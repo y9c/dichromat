@@ -101,9 +101,15 @@ if __name__ == "__main__":
             # A -> A and A -> G
             unc = b[("A", "A")]
             con = b[("A", "G")]
-            res.append(f"{con/(con + unc):.3%}")
+            if con + unc > 0:
+                res.append(f"{con/(con + unc):.3%}")
+            else:
+                res.append("NA")
             # C -> C and C -> T
             unc = b[("C", "C")]
             con = b[("C", "T")]
-            res.append(f"{con/(con + unc):.3%}")
+            if con + unc > 0:
+                res.append(f"{con/(con + unc):.3%}")
+            else:
+                res.append("NA")
             print(input_file.split("/")[-1].rsplit(".", 2)[0], *res, sep="\t")
