@@ -74,7 +74,7 @@ In this mode, Snakemake runs on your host and manages the container execution fo
 *   **Pros**: Full flexibility for cluster integration (Slurm, LSF, etc.) and better resource management.
 *   **Command**:
     ```bash
-    ./dichromat.sh --batch your_batch_name --profile slurm_changye
+    ./dichromat.sh --batch your_batch_name
     ```
 
 #### Method B: Container-Controlled (Zero Setup)
@@ -82,7 +82,7 @@ In this mode, you run the container directly, which internally executes Snakemak
 *   **Pros**: Portable and requires zero host-side configuration (except Apptainer).
 *   **Command**:
     ```bash
-    apptainer run -B /data:/data dichromat.sif -c config.yaml
+    apptainer run -B /data dichromat.sif -c config.yaml
     ```
     *(Note: Ensure you bind-mount your data folders using the `-B` flag as shown.)*
 

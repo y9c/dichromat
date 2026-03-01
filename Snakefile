@@ -160,10 +160,39 @@ rule all:
         "report_sites/sites.html",
         "report_sites/filtered.tsv" if IS_ETAM else "report_sites/merged.tsv.gz",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
+        INTERNALDIR / "README.md",
 
 
 # prepare ref
 
+
+rule internal_readme:
+    output:
+        INTERNALDIR / "README.md",
+    run:
+        with open(output[0], "w") as f:
+            f.write("# Internal Pipeline Files\n\n")
+            f.write("This directory contains intermediate files for the `dichromat` pipeline.\n\n")
+            f.write("## Data Flow & Directory Structure\n\n")
+            f.write("### 1. `qc/` & `fastq/unmapped/`\n")
+            f.write("- `qc/trimming/`: Trimming reports from `cutseq`.\n")
+            f.write("- `qc/fastqc/`: FastQC reports for trimmed reads.\n")
+            f.write("- `fastq/unmapped/`: Reads that failed to map to any reference.\n\n")
+            f.write("### 2. `ref/`\n")
+            f.write("- Generated indices and processed reference files (contamination, genes, transcript).\n\n")
+            f.write("### 3. `bam/`\n")
+            f.write("- `bam/per_run/`: Initial alignments for each sequencing run.\n")
+            f.write("- `bam/*.genome.bam`: Final merged, deduplicated, and sorted BAM aligned to genome.\n")
+            f.write("- `bam/*.transcript.bam`: Aligned to the transcriptome.\n\n")
+            f.write("### 4. `stats/`\n")
+            f.write("- `stats/count/`: Read count throughput tables.\n")
+            f.write("- `stats/dedup/`: Detailed logs from `markdup` deduplication.\n")
+            f.write("- `stats/multiqc/`: Summaries for the Mapping report.\n")
+            f.write("- `stats/multiqc_sites/`: Summaries for the Site report.\n\n")
+            f.write("### 5. `pileup/`\n")
+            f.write("- Site-level conversion data (tsv.gz) used for site calling.\n\n")
+            f.write("---\n")
+            f.write("*Note: For final results, see `report_reads/` and `report_sites/`.*\n")
 
 rule combine_contamination_fa:
     benchmark:
