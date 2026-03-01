@@ -104,15 +104,15 @@ def join_files_by_polar(
     files_ordered = list(files_ordered)
     names_ordered = list(names_ordered)
     requires_ordered = list(requires_ordered)
-    shinked = False
+    filtered = False
     df_joined = read_file_by_polar(files_ordered[0], names_ordered[0])
     for f, n, r in zip(files_ordered[1:], names_ordered[1:], requires_ordered[1:]):
         logging.info(f"Start to process: {f}, {n}, {r}")
-        if not shinked and not r:
+        if not filtered and not r:
             df_joined = df_joined.fill_null(0).filter(
                 pl.max_horizontal(pl.col("^Depth_.*$")) >= min_depth
             )
-            shinked = True
+            filtered = True
         df = read_file_by_polar(f, n)
 
         df_joined = (

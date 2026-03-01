@@ -30,11 +30,11 @@ def parse_chrom(input_file, chrom):
     background_counter = defaultdict(Counter)
     samfile = pysam.AlignmentFile(input_file, "rb")
     for read in samfile.fetch(chrom, until_eof=True):
+        if not read.has_tag("Yf") or not read.has_tag("Zf"):
+            continue
         c = read.get_tag("Yf")
         u = read.get_tag("Zf")
-        # if c + u < 5 or u > 3:
-        # or u > 2:
-        if c is None or u is None or int(c) + int(u) < 5:
+        if c + u < 5:
             continue
         for read_pos, ref_pos, ref_base in read.get_aligned_pairs(
             with_seq=True, matches_only=True
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     import argparse
 
     args = argparse.ArgumentParser()
-    # list of iinput files
+    # list of input files
     args.add_argument("input_file", nargs="+")
     args.add_argument("-t", "--threads", type=int, default=16)
     args.add_argument("-r", "--ref_suffix", type=str, default="probe_")

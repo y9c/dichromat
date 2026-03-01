@@ -95,7 +95,6 @@ PATH = SimpleNamespace(**config.get("path", {}))
 
 INTERNALDIR = Path("internal_files")
 BENCHDIR = Path(".snakemake/benchmarks")
-BENCHDIR = Path(".snakemake/benchmarks")
 MARKDUP = config.get("markdup", True)
 SPLICE_GENOME = config.get("splice_genome", True)
 SPLICE_CONTAM = config.get("splice_contamination", False)
