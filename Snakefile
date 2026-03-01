@@ -104,6 +104,7 @@ SPLICE_CONTAM = config.get("splice_contamination", False)
 wildcard_constraints:
     sample=r"[^/_\.]+",
     rn=r"run[0-9]+",
+    reftype="genome|transcript|genes|contamination"
 
 
 SAMPLE2DATA = defaultdict(lambda: defaultdict(dict))
@@ -1284,7 +1285,7 @@ rule pileup_base:
     input:
         TEMPDIR / "pileup/{sample}.{reftype}.tsv",
     output:
-        INTERNALDIR / "per_sample_pileup/{sample}.{reftype}.tsv.gz",
+        INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
     threads: 16
     benchmark:
         BENCHDIR / "pileup_base_{sample}_{reftype}.benchmark.txt"
@@ -1294,7 +1295,7 @@ rule pileup_base:
 
 rule unfilter_genes_stat:
     input:
-        INTERNALDIR / "per_sample_pileup/{sample}.{reftype}.tsv.gz",
+        INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
     output:
         INTERNALDIR / "stats/{sample}.{reftype}.genes.tsv",
     benchmark:
@@ -1307,7 +1308,7 @@ rule unfilter_genes_stat:
 
 rule motif_conversion_rate_stat:
     input:
-        pileup=INTERNALDIR / "per_sample_pileup/{sample}.{reftype}.tsv.gz",
+        pileup=INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
     output:
         INTERNALDIR / "stats/{sample}.{reftype}.motif.tsv",
     benchmark:
@@ -1319,7 +1320,7 @@ rule motif_conversion_rate_stat:
 rule join_pileup_table:
     input:
         expand(
-            INTERNALDIR / "per_sample_pileup/{sample}.{{reftype}}.tsv.gz",
+            INTERNALDIR / "pileup/per_sample/{sample}.{{reftype}}.tsv.gz",
             sample=SAMPLE2DATA.keys(),
         ),
     output:
@@ -1362,13 +1363,13 @@ rule merge_gene_and_genome_table:
 
 
 rule filter_eTAM_sites:
-    benchmark:
-        BENCHDIR / "filter_eTAM_sites.benchmark.txt"
     input:
         "report_sites/sites.tsv.gz",
     output:
         fl="report_sites/filtered.tsv",
     threads: 16
+    benchmark:
+        BENCHDIR / "filter_eTAM_sites.benchmark.txt"
     shell:
         """
         {PATH.filter_sites} -i {input} -o {output.fl}
@@ -1376,10 +1377,6 @@ rule filter_eTAM_sites:
 
 
 rule group_and_pval_cal:
-    benchmark:
-        BENCHDIR / "group_and_pval_cal_{group}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "group_and_pval_cal.benchmark.txt"
     input:
         "report_sites/sites.tsv.gz",
     output:
@@ -1387,6 +1384,8 @@ rule group_and_pval_cal:
     params:
         names=lambda wildcards: GROUP2SAMPLE[wildcards.group],
     threads: 8
+    benchmark:
+        BENCHDIR / "group_and_pval_cal_{group}.benchmark.txt"
     shell:
         """
         {PATH.sum_groups} -i {input} -o {output} -n {params.names}
