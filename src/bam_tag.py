@@ -31,7 +31,7 @@ def parse_read(read, strand_type):
         if read.is_paired:
             if read.is_unmapped or read.mate_is_unmapped:
                 return read
-            strand = "-" if read.is_read1 is read.is_reverse else "+"
+            strand = "-" if read.is_read1 != read.is_reverse else "+"
         else:
             if read.is_unmapped:
                 return read
@@ -60,13 +60,13 @@ def parse_read(read, strand_type):
     zf = 0
     yc = 0
     zc = 0
-    # Number of submsitution
+    # Number of substitution
     ns = 0
     # Number of CLIP and INDEL
     nc = 0
 
     for read_pos, _, ref_base in read.get_aligned_pairs(with_seq=True):
-        # Dn not forget to convert the ref_base to upper case
+        # Do not forget to convert the ref_base to upper case
         ref_base = ref_base.upper() if ref_base is not None else None
         read_base = s[read_pos] if read_pos is not None else None
 
@@ -118,7 +118,7 @@ def add_tag(bam, output, strand_type):
 
 
 def primary_group(group, drop_reverse):
-    # NS: Number of submsitution
+    # NS: Number of substitution
     # NC: number of soft clip
     clip_weight = 0.2
     # single end penalty weight
