@@ -967,7 +967,7 @@ rule unmapped_qc:
         summary=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/summary.txt",
     params:
         lambda wildcards: INTERNALDIR
-        / f"qc/fastqc/unmapped/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
+        / f"qc/fastqc_unmapped/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
     shell:
         "{PATH.falco} -o {params} {input}"
 
@@ -979,7 +979,7 @@ rule unmapped_report:
         BENCHDIR / "unmapped_report.benchmark.txt"
     input:
         [
-            INTERNALDIR / f"qc/fastqc/unmapped/{s}_{r}_{i}/fastqc_data.txt"
+            INTERNALDIR / f"qc/fastqc_unmapped/{s}_{r}_{i}/fastqc_data.txt"
             for s, v in SAMPLE2DATA.items()
             for r, v2 in v.items()
             for i in ["R1", "R2"]
@@ -1383,8 +1383,9 @@ rule aggregate_multiqc_stats:
             sample=SAMPLE2DATA.keys(),
         ),
         dedup_logs=expand(
-            INTERNALDIR / "stats/dedup/{sample}.genome.log",
+            INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
             sample=SAMPLE2DATA.keys(),
+            reftype=["genome", "transcript", "genes", "contamination"],
         ),
         trim_jsons=expand(
             INTERNALDIR / "qc/trimming/{sample}_{rn}.json",
@@ -1417,7 +1418,7 @@ rule generate_mapping_report:
         report_dir=str(Path("report_reads")),
         search_dir=str(INTERNALDIR / "stats/multiqc"),
     shell:
-        "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir}"
+        "{PATH.multiqc} -f --no-ansi -n {params.report_name} -o {params.report_dir} {params.search_dir}"
 
 
 rule generate_site_report:

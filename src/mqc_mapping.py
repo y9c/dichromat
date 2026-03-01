@@ -8,9 +8,13 @@ import json
 
 def parse_dedup_log(f):
     """Parse markdup log file for key metrics"""
-    stats = {}
-    sample = os.path.basename(f).split('.')[0]
-    stats['Sample'] = sample
+    # Filename format: {sample}.{reftype}.log
+    basename = os.path.basename(f)
+    parts = basename.split('.')
+    sample = parts[0]
+    reftype = parts[1]
+    
+    stats = {'Sample': sample, 'Type': reftype}
     try:
         with open(f, 'r') as fh:
             content = fh.read()
@@ -27,38 +31,32 @@ def parse_dedup_log(f):
     return stats
 
 def parse_trim_json(f):
-    """Parse cutseq/cutadapt JSON for trimming percentage"""
     sample = os.path.basename(f).split('_')[0]
     try:
         with open(f, 'r') as fh:
             data = json.load(fh)
-            # Extract from 'report' -> 'summary' -> 'terminal_stats' or similar
-            # In cutseq/cutadapt JSON, it is usually under 'filtering_statistics'
             pct = data.get('filtering_statistics', {}).get('percent_trimmed', 0)
             return {'Sample': sample, 'Trimmed_Pct': pct}
-    except Exception as e:
-        print(f"Warning: Could not parse trim JSON {f}: {e}")
+    except: pass
     return {'Sample': sample, 'Trimmed_Pct': 0}
 
 def main():
-    parser = argparse.ArgumentParser(description="Aggregate mapping and dedup stats for MultiQC")
-    parser.add_argument("mapping_output", help="Output mapping TSV")
-    parser.add_argument("dedup_output", help="Output dedup TSV")
-    parser.add_argument("count_files", nargs="+", help="Input count TSV files")
-    parser.add_argument("--dedup-logs", nargs="*", help="Input markdup log files")
-    parser.add_argument("--trim-jsons", nargs="*", help="Input trimming JSON files")
-    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mapping_output")
+    parser.add_argument("dedup_output")
+    parser.add_argument("count_files", nargs="+")
+    parser.add_argument("--dedup-logs", nargs="*")
+    parser.add_argument("--trim-jsons", nargs="*")
     args = parser.parse_args()
 
-    # 1. Process Mapping Counts
+    # 1. Pipeline Mapping Statistics (Table + Plot)
     dfs = []
     for f in args.count_files:
         sample = os.path.basename(f).replace('.tsv', '')
         try:
             df = pl.read_csv(f, separator='\t', has_header=False, new_columns=['Metric', sample])
             dfs.append(df)
-        except Exception as e:
-            print(f"Warning: Could not read {f}: {e}")
+        except: pass
 
     if dfs:
         df_final = dfs[0]
@@ -70,47 +68,54 @@ def main():
         samples = [os.path.basename(f).replace('.tsv', '') for f in args.count_files]
         df_mapping = df_mapping.insert_column(0, pl.Series("Sample", samples))
 
-        # Add Trimming data if provided
         if args.trim_jsons:
-            trim_data = [parse_trim_json(f) for f in args.trim_jsons]
-            df_trim = pl.DataFrame(trim_data)
+            df_trim = pl.DataFrame([parse_trim_json(f) for f in args.trim_jsons])
             df_mapping = df_mapping.join(df_trim, on="Sample", how="left")
 
+        # Table Header
         header_mapping = [
             "# id: mapping_stats_table",
             "# section_name: 'Pipeline Mapping Statistics'",
-            "# description: 'Aggregated read counts across pipeline stages.'",
+            "# description: 'Read counts at each stage. Passed columns show effective mapping; Dedup columns show reads after duplication removal.'",
             "# plot_type: 'table'",
             "# pconfig:",
             "#    namespace: 'Mapping'",
-            "#    format: '{:,.0f}'",
-            "#    col_config:",
-            "#        Trimmed_Pct:",
-            "#            suffix: '%'",
-            "#            scale: 'Purples'",
-            "#            format: '{:.1f}'",
         ]
+        
+        # Add a graphical bar plot for the same data
+        header_mapping.extend([
+            "# id: mapping_stats_plot",
+            "# section_name: 'Mapping Throughput'",
+            "# plot_type: 'bargraph'",
+            "# pconfig:",
+            "#    id: 'mapping_stats_bargraph'",
+            "#    title: 'Mapping Throughput'",
+            "#    ylab: 'Number of Reads'",
+        ])
+
         with open(args.mapping_output, 'w') as f_out:
             f_out.write("\n".join(header_mapping) + "\n")
             df_mapping.write_csv(f_out, separator='\t', include_header=True)
 
-    # 2. Process Dedup Logs
+    # 2. Deduplication Statistics (All Types)
     if args.dedup_logs:
         dedup_data = [parse_dedup_log(f) for f in args.dedup_logs]
         if dedup_data:
             df_dedup = pl.DataFrame(dedup_data)
+            # Create a combined Sample_Type key for display
+            df_dedup = df_dedup.with_columns(
+                pl.format("{}_{}", pl.col("Sample"), pl.col("Type")).alias("Sample_Library")
+            ).select(["Sample_Library", "Total_Reads", "Unique_Reads", "Duplicates", "Duplication_Rate"])
+            
             header_dedup = [
                 "# id: dedup_stats_table",
-                "# section_name: 'Deduplication Statistics (Genome)'",
-                "# description: 'Statistics from markdup deduplication on genome-aligned reads.'",
+                "# section_name: 'Detailed Deduplication Statistics'",
+                "# description: 'Deduplication metrics for all mapping targets.'",
                 "# plot_type: 'table'",
                 "# pconfig:",
                 "#    namespace: 'Deduplication'",
                 "#    col_config:",
-                "#        Duplication_Rate:",
-                "#            suffix: '%'",
-                "#            scale: 'YlOrRd'",
-                "#            format: '{:.2f}'",
+                "#        Duplication_Rate: {suffix: '%', scale: 'YlOrRd', format: '{:.2f}'}",
             ]
             with open(args.dedup_output, 'w') as f_out:
                 f_out.write("\n".join(header_dedup) + "\n")
