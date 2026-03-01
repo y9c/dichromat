@@ -28,7 +28,7 @@ path:
   filter_sites: "/opt/app_venv/bin/python /pipeline/src/filter_sites.py"
   sum_groups: "/opt/app_venv/bin/python /pipeline/src/sum_groups.py"
   mqc_mapping: "/opt/app_venv/bin/python /pipeline/src/mqc_mapping.py"
-  mqc_motif: "/opt/app_venv/bin/python /pipeline/src/mqc_motif.py"
+  mqc_sites: "/opt/app_venv/bin/python /pipeline/src/mqc_sites.py"
 
 min_len: 20
 markdup: true

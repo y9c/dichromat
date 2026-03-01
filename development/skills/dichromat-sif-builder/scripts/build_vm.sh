@@ -70,6 +70,7 @@ while true; do
             echo -e "${GREEN}✅ VM ready!${NC}"
             echo -e "${BLUE}   Node: $NODE${NC}"
             echo -e "${BLUE}   Port: $PORT${NC}"
+            sleep 30
             break
         fi
     fi

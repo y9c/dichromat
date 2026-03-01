@@ -157,7 +157,7 @@ rule all:
         "report_reads/mapping.html",
         "report_reads/trimmed.html",
         "report_reads/unmapped.html",
-        "report_sites/motif.html",
+        "report_sites/sites.html",
         "report_sites/filtered.tsv" if IS_ETAM else "report_sites/merged.tsv.gz",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
 
@@ -457,7 +457,7 @@ rule finalize_premap_summary:
             else TEMPDIR / f"premap/SE/{wildcards.sample}_{wildcards.rn}.summary"
         ),
     output:
-        INTERNALDIR / "stat/premap/{sample}_{rn}.summary",
+        INTERNALDIR / "stats/premap/{sample}_{rn}.summary",
     shell:
         "cp {input} {output}"
 
@@ -502,7 +502,7 @@ rule finalize_premap_bam:
             else TEMPDIR / f"premap/SE/{wildcards.sample}_{wildcards.rn}.fixmate.bam"
         ),
     output:
-        INTERNALDIR / "run_bam/{sample}_{rn}.contamination.bam",
+        INTERNALDIR / "bam/per_run/{sample}_{rn}.contamination.bam",
     threads: 36
     priority: 4
     shell:
@@ -616,7 +616,7 @@ rule finalize_mainmap_summary:
             else TEMPDIR / f"mainmap/SE/{wildcards.sample}_{wildcards.rn}.summary"
         ),
     output:
-        INTERNALDIR / "stat/mainmap/{sample}_{rn}.summary",
+        INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
     shell:
         "cp {input} {output}"
 
@@ -629,7 +629,7 @@ if HAS_GENES:
                 / f"mainmap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genes.bam"
             ),
         output:
-            INTERNALDIR / "run_bam/{sample}_{rn}.genes.bam",
+            INTERNALDIR / "bam/per_run/{sample}_{rn}.genes.bam",
         threads: 32
         shell:
             "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
@@ -646,7 +646,7 @@ rule finalize_mainmap_transcript_bam:
             / f"mainmap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.transcript.bam"
         ),
     output:
-        INTERNALDIR / "run_bam/{sample}_{rn}.transcript.bam",
+        INTERNALDIR / "bam/per_run/{sample}_{rn}.transcript.bam",
     threads: 32
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
@@ -763,7 +763,7 @@ rule finalize_remap_summary:
             else TEMPDIR / f"remap/SE/{wildcards.sample}_{wildcards.rn}.summary"
         ),
     output:
-        INTERNALDIR / "stat/remap/{sample}_{rn}.summary",
+        INTERNALDIR / "stats/remap/{sample}_{rn}.summary",
     shell:
         "cp {input} {output}"
 
@@ -882,7 +882,7 @@ rule finalize_genome_bam:
             else TEMPDIR / f"remap/SE/{wildcards.sample}_{wildcards.rn}.mapped.bam"
         ),
     output:
-        INTERNALDIR / "run_bam/{sample}_{rn}.genome.bam",
+        INTERNALDIR / "bam/per_run/{sample}_{rn}.genome.bam",
     shell:
         "cp {input} {output}"
 
@@ -899,7 +899,7 @@ rule finalize_genome_report:
             else TEMPDIR / f"remap/SE/{wildcards.sample}_{wildcards.rn}.report.json"
         ),
     output:
-        INTERNALDIR / "stat/filter/{sample}_{rn}.genome.json",
+        INTERNALDIR / "stats/filter/{sample}_{rn}.genome.json",
     shell:
         "cp {input} {output}"
 
@@ -949,7 +949,7 @@ rule finalize_unmapped_fq:
             / f"unmapped/remap/SE/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}.fq.gz"
         ),
     output:
-        INTERNALDIR / "qc/{sample}_{rn}_unmap_{rd}.fq.gz",
+        INTERNALDIR / "fastq/unmapped/{sample}_{rn}_{rd}.fq.gz",
     shell:
         "cp {input} {output}"
 
@@ -960,11 +960,11 @@ rule unmapped_qc:
     benchmark:
         BENCHDIR / "unmapped_qc.benchmark.txt"
     input:
-        INTERNALDIR / "qc/{sample}_{rn}_unmap_{rd}.fq.gz",
+        INTERNALDIR / "fastq/unmapped/{sample}_{rn}_{rd}.fq.gz",
     output:
-        html=INTERNALDIR / "qc/fastqc/unmapped/{sample}_{rn}_{rd}/fastqc_report.html",
-        text=INTERNALDIR / "qc/fastqc/unmapped/{sample}_{rn}_{rd}/fastqc_data.txt",
-        summary=INTERNALDIR / "qc/fastqc/unmapped/{sample}_{rn}_{rd}/summary.txt",
+        html=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/fastqc_report.html",
+        text=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/fastqc_data.txt",
+        summary=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/summary.txt",
     params:
         lambda wildcards: INTERNALDIR
         / f"qc/fastqc/unmapped/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
@@ -1024,8 +1024,8 @@ rule stat_combined:
     input:
         bam=TEMPDIR / "combined/{sample}.{reftype}.bam",
     output:
-        stat=INTERNALDIR / "stat/combined/{sample}.{reftype}.txt",
-        n=INTERNALDIR / "stat/combined/{sample}.{reftype}.count",
+        stat=INTERNALDIR / "stats/combined/{sample}.{reftype}.txt",
+        n=INTERNALDIR / "stats/combined/{sample}.{reftype}.count",
     threads: 4
     shell:
         """
@@ -1043,8 +1043,8 @@ rule drop_duplicates:
         bam=TEMPDIR / "combined/{sample}.{reftype}.bam",
         bai=TEMPDIR / "combined/{sample}.{reftype}.bam.bai",
     output:
-        bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
-        txt=INTERNALDIR / "stat/dedup/{sample}.{reftype}.log",
+        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
+        txt=INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
     threads: 48
     shell:
         "{PATH.markdup} -t {threads} -i {input.bam} -o {output.bam} --report {output.txt}"
@@ -1056,9 +1056,9 @@ rule dedup_index:
     benchmark:
         BENCHDIR / "dedup_index.benchmark.txt"
     input:
-        bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
+        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
-        bai=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam.bai",
+        bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
     threads: 12
     shell:
         "{PATH.samtools} index -@ {threads} {input}"
@@ -1070,10 +1070,10 @@ rule stat_dedup:
     benchmark:
         BENCHDIR / "stat_dedup.benchmark.txt"
     input:
-        bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
+        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
-        stat=INTERNALDIR / "stat/dedup/{sample}.{reftype}.txt",
-        n=INTERNALDIR / "stat/dedup/{sample}.{reftype}.count",
+        stat=INTERNALDIR / "stats/dedup/{sample}.{reftype}.txt",
+        n=INTERNALDIR / "stats/dedup/{sample}.{reftype}.count",
     threads: 4
     shell:
         """
@@ -1088,8 +1088,8 @@ rule liftover_transcript_to_genome:
     benchmark:
         BENCHDIR / "liftover_transcript_to_genome.benchmark.txt"
     input:
-        transcripts=INTERNALDIR / "aligned_bam/{sample}.transcript.bam",
-        genome=INTERNALDIR / "aligned_bam/{sample}.genome.bam",
+        transcripts=INTERNALDIR / "bam/{sample}.transcript.bam",
+        genome=INTERNALDIR / "bam/{sample}.genome.bam",
         info=INTERNALDIR / "ref/transcript.tsv",
     output:
         transcripts=temp(TEMPDIR / "liftover/{sample}.transcript.bam"),
@@ -1115,23 +1115,23 @@ rule count_reads:
             for r in SAMPLE2DATA[wildcards.sample].keys()
         ],
         count1=(
-            INTERNALDIR / "stat/combined/{sample}.contamination.count"
+            INTERNALDIR / "stats/combined/{sample}.contamination.count"
             if HAS_CONTAM
             else []
         ),
         count2=(
-            INTERNALDIR / "stat/dedup/{sample}.contamination.count"
+            INTERNALDIR / "stats/dedup/{sample}.contamination.count"
             if HAS_CONTAM
             else []
         ),
-        count3=(INTERNALDIR / "stat/combined/{sample}.genes.count" if HAS_GENES else []),
-        count4=(INTERNALDIR / "stat/dedup/{sample}.genes.count" if HAS_GENES else []),
-        count5=INTERNALDIR / "stat/combined/{sample}.transcript.count",
-        count6=INTERNALDIR / "stat/dedup/{sample}.transcript.count",
-        count7=INTERNALDIR / "stat/combined/{sample}.genome.count",
-        count8=INTERNALDIR / "stat/dedup/{sample}.genome.count",
+        count3=(INTERNALDIR / "stats/combined/{sample}.genes.count" if HAS_GENES else []),
+        count4=(INTERNALDIR / "stats/dedup/{sample}.genes.count" if HAS_GENES else []),
+        count5=INTERNALDIR / "stats/combined/{sample}.transcript.count",
+        count6=INTERNALDIR / "stats/dedup/{sample}.transcript.count",
+        count7=INTERNALDIR / "stats/combined/{sample}.genome.count",
+        count8=INTERNALDIR / "stats/dedup/{sample}.genome.count",
     output:
-        INTERNALDIR / "stat/count/{sample}.tsv",
+        INTERNALDIR / "stats/count/{sample}.tsv",
     threads: 2
     shell:
         """
@@ -1162,9 +1162,9 @@ rule insert_size:
     benchmark:
         BENCHDIR / "insert_size.benchmark.txt"
     input:
-        bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
+        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
-        tsv=INTERNALDIR / "stat/rlen/{sample}.{reftype}.isize.tsv",
+        tsv=INTERNALDIR / "stats/rlen/{sample}.{reftype}.isize.tsv",
     threads: 8
     shell:
         """
@@ -1178,9 +1178,9 @@ rule read_length:
     benchmark:
         BENCHDIR / "read_length.benchmark.txt"
     input:
-        bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
+        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
-        tsv=INTERNALDIR / "stat/rlen/{sample}.{reftype}.rlen.tsv",
+        tsv=INTERNALDIR / "stats/rlen/{sample}.{reftype}.rlen.tsv",
     threads: 8
     shell:
         """
@@ -1197,14 +1197,14 @@ if HAS_GENES:
     rule cal_spike_ratio:
         input:
             bam=expand(
-                INTERNALDIR / "aligned_bam/{sample}.genes.bam", sample=SAMPLE2DATA.keys()
+                INTERNALDIR / "bam/{sample}.genes.bam", sample=SAMPLE2DATA.keys()
             ),
             bai=expand(
-                INTERNALDIR / "aligned_bam/{sample}.genes.bam.bai",
+                INTERNALDIR / "bam/{sample}.genes.bam.bai",
                 sample=SAMPLE2DATA.keys(),
             ),
         output:
-            tsv=INTERNALDIR / "stat/ratio/probe.tsv",
+            tsv=INTERNALDIR / "stats/ratio/probe.tsv",
         threads: 8
         shell:
             """
@@ -1218,8 +1218,8 @@ rule run_countmut:
     benchmark:
         BENCHDIR / "run_countmut.benchmark.txt"
     input:
-        bam=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam",
-        bai=INTERNALDIR / "aligned_bam/{sample}.{reftype}.bam.bai",
+        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
+        bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
         ref=lambda wildcards: (
             INTERNALDIR / "ref/transcript.fa"
             if wildcards.reftype == "transcript"
@@ -1261,7 +1261,7 @@ rule unfilter_genes_stat:
     input:
         INTERNALDIR / "pileup/{sample}.{reftype}.tsv.gz",
     output:
-        INTERNALDIR / "stat/{sample}.{reftype}.genes.tsv",
+        INTERNALDIR / "stats/{sample}.{reftype}.genes.tsv",
     shell:
         """
         zcat {input} | awk -F '\\t' 'NR>1 && $1!~"^probe_" && ($6+$9+$7+$10+0)>0{{u[$6]+=$6+$7; d[$1]+=$6+$9+$7+$10; r[$1]+=($6+$7)/($6+$9+$7+$10); n[$1]+=1}}END{{ for(x in u){{print x,n[x],u[x],d[x],r[x]/n[x]}} }}' > {output}
@@ -1276,7 +1276,7 @@ rule motif_conversion_rate_stat:
     input:
         pileup=INTERNALDIR / "pileup/{sample}.{reftype}.tsv.gz",
     output:
-        INTERNALDIR / "stat/{sample}.{reftype}.motif.tsv",
+        INTERNALDIR / "stats/{sample}.{reftype}.motif.tsv",
     shell:
         'zcat {input.pileup} | awk -F \'\\t\' \'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio"}} NR>1 && ($6+$9+$7+$10+0)>0{{m=toupper(substr($4,15,3)); if(m ~ /^[ATGC]+$/){{n[m]+=1;u[m]+=$6+$7;d[m]+=$6+$9+$7+$10;r[m]+=($6+$7)/($6+$9+$7+$10)}}}} END{{for(m in d) print m,n[m],u[m],d[m],r[m]/n[m]}}\' > {output}'
 
@@ -1376,19 +1376,29 @@ rule aggregate_multiqc_stats:
         BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
     input:
         counts=expand(
-            INTERNALDIR / "stat/count/{sample}.tsv", sample=SAMPLE2DATA.keys()
+            INTERNALDIR / "stats/count/{sample}.tsv", sample=SAMPLE2DATA.keys()
         ),
         motifs=expand(
-            INTERNALDIR / "stat/{sample}.transcript.motif.tsv",
+            INTERNALDIR / "stats/{sample}.transcript.motif.tsv",
             sample=SAMPLE2DATA.keys(),
         ),
+        dedup_logs=expand(
+            INTERNALDIR / "stats/dedup/{sample}.genome.log",
+            sample=SAMPLE2DATA.keys(),
+        ),
+        trim_jsons=expand(
+            INTERNALDIR / "qc/trimming/{sample}_{rn}.json",
+            sample=SAMPLE2DATA.keys(),
+            rn=["run1"],
+        ),
     output:
-        mapping=INTERNALDIR / "stat/multiqc/mapping_stats_mqc.tsv",
-        motifs=INTERNALDIR / "stat/multiqc/motif_conversion_mqc.tsv",
+        mapping=INTERNALDIR / "stats/multiqc/mapping_stats_mqc.tsv",
+        motifs=INTERNALDIR / "stats/multiqc_sites/motif_conversion_mqc.tsv",
+        dedup=INTERNALDIR / "stats/multiqc/dedup_stats_mqc.tsv",
     shell:
         """
-        {PATH.mqc_mapping} {output.mapping} {input.counts}
-        {PATH.mqc_motif} {output.motifs} {input.motifs}
+        {PATH.mqc_mapping} {output.mapping} {output.dedup} {input.counts} --dedup-logs {input.dedup_logs} --trim-jsons {input.trim_jsons}
+        {PATH.mqc_sites} {output.motifs} {input.motifs}
         """
 
 
@@ -1398,21 +1408,16 @@ rule generate_mapping_report:
     benchmark:
         BENCHDIR / "generate_mapping_report.benchmark.txt"
     input:
-        INTERNALDIR / "stat/multiqc/mapping_stats_mqc.tsv",
-        expand(
-            INTERNALDIR / "qc/trimming/{sample}_{rn}.json",
-            sample=SAMPLE2DATA.keys(),
-            rn=["run1"],
-        ),
+        INTERNALDIR / "stats/multiqc/mapping_stats_mqc.tsv",
+        INTERNALDIR / "stats/multiqc/dedup_stats_mqc.tsv",
     output:
         "report_reads/mapping.html",
     params:
         report_name="mapping.html",
         report_dir=str(Path("report_reads")),
-        search_dir=str(INTERNALDIR / "stat/multiqc"),
-        trim_dir=str(INTERNALDIR / "qc/trimming"),
+        search_dir=str(INTERNALDIR / "stats/multiqc"),
     shell:
-        "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir} {params.trim_dir}"
+        "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir}"
 
 
 rule generate_site_report:
@@ -1421,12 +1426,17 @@ rule generate_site_report:
     benchmark:
         BENCHDIR / "generate_site_report.benchmark.txt"
     input:
-        INTERNALDIR / "stat/multiqc/motif_conversion_mqc.tsv",
+        INTERNALDIR / "stats/multiqc_sites/motif_conversion_mqc.tsv",
     output:
-        "report_sites/motif.html",
+        "report_sites/sites.html",
     params:
-        report_name="motif.html",
+        report_name="sites.html",
         report_dir=str(Path("report_sites")),
-        search_dir=str(INTERNALDIR / "stat/multiqc"),
+        search_dir=str(INTERNALDIR / "stats/multiqc_sites"),
     shell:
         "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir}"
+
+
+###################
+# multiqc custom
+###################

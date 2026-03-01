@@ -5,7 +5,7 @@ import os
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: mqc_motif.py output.tsv input1.tsv input2.tsv ...")
+        print("Usage: mqc_sites.py output.tsv input1.tsv input2.tsv ...")
         sys.exit(1)
 
     output_file = sys.argv[1]
@@ -13,10 +13,14 @@ def main():
 
     all_dfs = []
     for f in input_files:
-        sample = os.path.basename(f).replace('.transcript.motif.tsv', '')
+        filename = os.path.basename(f)
+        sample = filename.split('.')[0]
         try:
             df = pl.read_csv(f, separator='\t')
-            df = df.with_columns(pl.lit(sample).alias('Sample'))
+            df = df.with_columns(
+                pl.col('Motif').str.to_uppercase().str.replace_all('T', 'U'),
+                pl.lit(sample).alias('Sample')
+            )
             all_dfs.append(df)
         except Exception as e:
             print(f"Warning: Could not read {f}: {e}")
@@ -26,20 +30,21 @@ def main():
         sys.exit(1)
 
     df_concat = pl.concat(all_dfs)
-    
-    # Pivot: Index: Motif, Columns: Sample, Values: Ratio
-    # This creates a "verbose" heatmap view in MultiQC
     df_pivot = df_concat.pivot(on='Sample', index='Motif', values='Ratio')
+    df_pivot = df_pivot.sort("Motif")
 
     header = [
         "# id: motif_conversion_heatmap",
         "# section_name: 'Motif Conversion Ratios'",
-        "# description: 'Heatmap showing the conversion ratio (Unconverted / Depth) for each 3-mer motif across all samples.'",
+        "# description: 'Heatmap showing the global conversion ratio (Unconverted / Depth) for all 3-mer motifs.'",
         "# plot_type: 'heatmap'",
         "# pconfig:",
         "#    title: 'Motif Conversion Ratios'",
         "#    x_title: 'Sample'",
         "#    y_title: '3-mer Motif'",
+        "#    min: 0",
+        "#    max: 1",
+        "#    stops: [[0, '#f7fcf0'], [0.5, '#7bccc4'], [1, '#084081']]",
     ]
 
     with open(output_file, 'w') as f_out:
