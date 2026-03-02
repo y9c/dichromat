@@ -562,28 +562,35 @@ rule premap_get_unmapped_se:
 # main mapping step (genes and transcript simutaneously if genes provided, otherwise just transcript)
 
 
-rule build_mainmap_index:
+rule index_transcript:
     input:
-        rf1=lambda wildcards: INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
-        rf2=INTERNALDIR / "ref/transcript.fa",
+        rf=INTERNALDIR / "ref/transcript.fa",
     output:
-        idx2=INTERNALDIR / "ref/transcript/index.indexed",
-        **({"idx1": INTERNALDIR / "ref/genes/index.indexed"} if HAS_GENES else {})
+        idx=INTERNALDIR / "ref/transcript/index.indexed",
+    threads: 8
     benchmark:
-        BENCHDIR / "build_mainmap_index.benchmark.txt"
+        BENCHDIR / "index_transcript.benchmark.txt"
     shell:
         """
-        # Index transcript
         mkdir -p {INTERNALDIR}/ref/transcript
-        {PATH.coralsnake} map --index-only --index-dir {INTERNALDIR}/ref/transcript -r {input.rf2}
-        touch {output.idx2}
-        
-        # Index genes if provided
-        if [ "{HAS_GENES}" == "True" ]; then
-            mkdir -p {INTERNALDIR}/ref/genes
-            {PATH.coralsnake} map --index-only --index-dir {INTERNALDIR}/ref/genes -r {input.rf1}
-            touch {INTERNALDIR}/ref/genes/index.indexed
-        fi
+        {PATH.coralsnake} map --index-only --index-dir {INTERNALDIR}/ref/transcript -r {input.rf} -t {threads}
+        touch {output.idx}
+        """
+
+
+rule index_genes:
+    input:
+        rf=INTERNALDIR / "ref/genes.fa",
+    output:
+        idx=INTERNALDIR / "ref/genes/index.indexed",
+    threads: 8
+    benchmark:
+        BENCHDIR / "index_genes.benchmark.txt"
+    shell:
+        """
+        mkdir -p {INTERNALDIR}/ref/genes
+        {PATH.coralsnake} map --index-only --index-dir {INTERNALDIR}/ref/genes -r {input.rf} -t {threads}
+        touch {output.idx}
         """
 
 
