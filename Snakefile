@@ -274,7 +274,7 @@ rule trim_se:
         BENCHDIR / "trim_se_{sample}_{rn}.benchmark.txt"
     shell:
         """
-        {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -s {output.s} --json-file {output.report} {input} 
+        {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -s {output.s} --json-file {output.report} {input}
         """
 
 
@@ -300,7 +300,7 @@ rule trim_pe:
         BENCHDIR / "trim_pe_{sample}_{rn}.benchmark.txt"
     shell:
         """
-        {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} -p {output.c2} -s {output.s1} -S {output.s2} --json-file {output.report} {input.r1} {input.r2}
+        {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} {output.c2} -s {output.s1} {output.s2} --json-file {output.report} {input.r1} {input.r2}
         """
 
 
@@ -605,9 +605,8 @@ rule finalize_mainmap_summary:
         INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
     benchmark:
         BENCHDIR / "finalize_mainmap_summary_{sample}_{rn}.benchmark.txt"
-        BENCHDIR / "finalize_mainmap_summary.benchmark.txt"
     shell:
-        "cp {input} {output}"
+        "cp {input} {output}" 
 rule finalize_mainmap_genes_bam:
     input:
         lambda wildcards: (
@@ -634,7 +633,6 @@ rule finalize_mainmap_transcript_bam:
     threads: 12
     benchmark:
         BENCHDIR / "finalize_mainmap_transcript_bam_{sample}_{rn}.benchmark.txt"
-        BENCHDIR / "finalize_mainmap_transcript_bam.benchmark.txt"
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 rule mainmap_get_unmapped_pe:
@@ -645,7 +643,6 @@ rule mainmap_get_unmapped_pe:
         r2=temp(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz"),
     benchmark:
         BENCHDIR / "mainmap_get_unmapped_pe_{sample}_{rn}.benchmark.txt"
-        BENCHDIR / "mainmap_get_unmapped_pe.benchmark.txt"
     shell:
         """
         {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
@@ -657,7 +654,6 @@ rule mainmap_get_unmapped_se:
         r1=temp(TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz"),
     benchmark:
         BENCHDIR / "mainmap_get_unmapped_se_{sample}_{rn}.benchmark.txt"
-        BENCHDIR / "mainmap_get_unmapped_se.benchmark.txt"
     shell:
         """
         {PATH.samtools} fastq -0 {output.r1} -n {input}
@@ -741,7 +737,6 @@ rule finalize_remap_summary:
         INTERNALDIR / "stats/remap/{sample}_{rn}.summary",
     benchmark:
         BENCHDIR / "finalize_remap_summary_{sample}_{rn}.benchmark.txt"
-        BENCHDIR / "finalize_remap_summary.benchmark.txt"
     shell:
         "cp {input} {output}"
 rule finalize_genome_bam:
@@ -995,7 +990,6 @@ rule insert_size:
     threads: 8
     benchmark:
         BENCHDIR / "insert_size_{sample}_{reftype}.benchmark.txt"
-        BENCHDIR / "insert_size.benchmark.txt"
     shell:
         """
         {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^IS|cut -f 2- > {output}
@@ -1008,7 +1002,6 @@ rule read_length:
     threads: 8
     benchmark:
         BENCHDIR / "read_length_{sample}_{reftype}.benchmark.txt"
-        BENCHDIR / "read_length.benchmark.txt"
     shell:
         """
         {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^RL | cut -f 2- > {output}
