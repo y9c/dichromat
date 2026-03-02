@@ -5,8 +5,8 @@ skip_samples: []
 path:
   python: "python"
   samtools: "samtools"
-  hisat3n: "hisat-3n"
-  hisat3nbuild: "hisat-3n-build"
+  hisat3n: "hisat3n"
+  hisat3nbuild: "hisat3n build"
   cutseq: "cutseq"
   falco: "falco"
   bgzip: "bgzip"

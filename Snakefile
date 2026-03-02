@@ -104,7 +104,8 @@ SPLICE_CONTAM = config.get("splice_contamination", False)
 wildcard_constraints:
     sample=r"[^/_\.]+",
     rn=r"run[0-9]+",
-    reftype="genome|transcript|genes|contamination"
+    reftype="genome|transcript|genes|contamination",
+    libmode="PE|SE",
 
 
 SAMPLE2DATA = defaultdict(lambda: defaultdict(dict))
@@ -161,14 +162,12 @@ rule all:
         INTERNALDIR / "stats/ratio/probe.tsv" if HAS_GENES else [],
     benchmark:
         BENCHDIR / "all.benchmark.txt"
-
-
 # prepare ref
-
-
 rule internal_readme:
     output:
         INTERNALDIR / "README.md",
+    benchmark:
+        BENCHDIR / "internal_readme.benchmark.txt"
     run:
         with open(output[0], "w") as f:
             f.write("# Internal Pipeline Files\n\n")
@@ -195,23 +194,20 @@ rule internal_readme:
             f.write("- `pileup/genome.tsv.gz`: Merged genomic pileup.\n\n")
             f.write("---\n")
             f.write("*Note: For final results (including merged `sites.tsv.gz`), see `report_reads/` and `report_sites/`.*\n")
-
 rule combine_contamination_fa:
-    benchmark:
-        BENCHDIR / "combine_contamination_fa.benchmark.txt"
     input:
         REF.get("contamination", []) if "contamination" in REF else [],
     output:
         fa=INTERNALDIR / "ref/contamination.fa",
         fai=INTERNALDIR / "ref/contamination.fa.fai",
+    benchmark:
+        BENCHDIR / "combine_contamination_fa.benchmark.txt"
     shell:
         """
         mkdir -p $(dirname {output.fa})
         cat {input} > {output.fa}
         {PATH.samtools} faidx {output.fa} --fai-idx {output.fai}
         """
-
-
 rule build_contamination_hisat3n_index:
     input:
         INTERNALDIR / "ref/contamination.fa",
@@ -227,51 +223,39 @@ rule build_contamination_hisat3n_index:
         """
         mkdir -p $(dirname {params.prefix})
         rm -f {params.prefix}*.ht2
-        {PATH.hisat3nbuild} -p {threads} --base-change {params.basechange} {input} {params.prefix}
+        {PATH.hisat3n} build -p {threads} --base-change {params.basechange} {input} {params.prefix}
         touch {output}
         """
-
-
 rule combine_genes_fa:
-    benchmark:
-        BENCHDIR / "combine_genes_fa.benchmark.txt"
     input:
         REF.get("genes", []) if "genes" in REF else [],
     output:
         fa=INTERNALDIR / "ref/genes.fa",
         fai=INTERNALDIR / "ref/genes.fa.fai",
+    benchmark:
+        BENCHDIR / "combine_genes_fa.benchmark.txt"
     shell:
         """
         mkdir -p $(dirname {output.fa})
         cat {input} > {output.fa}
         {PATH.samtools} faidx {output.fa} --fai-idx {output.fai}
         """
-
-
 rule prepared_transcript_ref:
-    benchmark:
-        BENCHDIR / "prepared_transcript_ref.benchmark.txt"
     input:
         fa=REF["genome"]["fa"],
         gtf=REF["genome"]["gtf"],
     output:
         info=INTERNALDIR / "ref/transcript.tsv",
         seq=INTERNALDIR / "ref/transcript.fa",
+    benchmark:
+        BENCHDIR / "prepared_transcript_ref.benchmark.txt"
     shell:
         """
         mkdir -p $(dirname {output.info})
         coralsnake prepare -g {input.gtf} -f {input.fa} -o {output.info} -s {output.seq} -c -n -x -t -z
         """
-
-
 # cut adapters
-
-
 rule trim_se:
-    benchmark:
-        BENCHDIR / "trim_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "trim_se.benchmark.txt"
     input:
         lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
     output:
@@ -286,6 +270,8 @@ rule trim_se:
             else f"-a '{SAMPLE2ADP[wildcards.sample]}'"
         ),
     threads: 8
+    benchmark:
+        BENCHDIR / "trim_se_{sample}_{rn}.benchmark.txt"
     shell:
         """
         {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -s {output.s} --json-file {output.report} {input} 
@@ -293,10 +279,6 @@ rule trim_se:
 
 
 rule trim_pe:
-    benchmark:
-        BENCHDIR / "trim_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "trim_pe.benchmark.txt"
     input:
         r1=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
         r2=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R2") or [],
@@ -314,6 +296,8 @@ rule trim_pe:
             else f"-a '{SAMPLE2ADP[wildcards.sample]}'"
         ),
     threads: 8
+    benchmark:
+        BENCHDIR / "trim_pe_{sample}_{rn}.benchmark.txt"
     shell:
         """
         {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} -p {output.c2} -s {output.s1} -S {output.s2} --json-file {output.report} {input.r1} {input.r2}
@@ -321,10 +305,6 @@ rule trim_pe:
 
 
 rule finalize_trim_report:
-    benchmark:
-        BENCHDIR / "finalize_trim_report_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_trim_report.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"trim/PE/{wildcards.sample}_{wildcards.rn}.json"
@@ -333,15 +313,13 @@ rule finalize_trim_report:
         ),
     output:
         INTERNALDIR / "qc/trimming/{sample}_{rn}.json",
+    benchmark:
+        BENCHDIR / "finalize_trim_report_{sample}_{rn}.benchmark.txt"
     shell:
         "cp {input} {output}"
 
 
 rule finalize_discarded_reads:
-    benchmark:
-        BENCHDIR / "finalize_discarded_reads_{sample}_{rn}_{rd}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_discarded_reads.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR
@@ -352,6 +330,8 @@ rule finalize_discarded_reads:
         ),
     output:
         INTERNALDIR / "qc/{sample}_{rn}_tooshort_{rd}.fq.gz",
+    benchmark:
+        BENCHDIR / "finalize_discarded_reads_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
         "cp {input} {output}"
 
@@ -360,10 +340,6 @@ rule finalize_discarded_reads:
 
 
 rule qc_trimmed:
-    benchmark:
-        BENCHDIR / "qc_trimmed_{sample}_{rn}_{rd}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "qc_trimmed.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR
@@ -376,13 +352,11 @@ rule qc_trimmed:
     params:
         lambda wildcards: INTERNALDIR
         / f"qc/fastqc/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
+    benchmark:
+        BENCHDIR / "qc_trimmed_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
         "{PATH.falco} -o {params} {input}"
-
-
 rule report_qc_trimmed:
-    benchmark:
-        BENCHDIR / "report_qc_trimmed.benchmark.txt"
     input:
         [
             INTERNALDIR / f"qc/fastqc/{sample}_{rn}_{rd}/fastqc_data.txt"
@@ -392,13 +366,11 @@ rule report_qc_trimmed:
         ],
     output:
         "report_reads/trimmed.html",
+    benchmark:
+        BENCHDIR / "report_qc_trimmed.benchmark.txt"
     shell:
         "{PATH.multiqc} -f -m fastqc -n {output} {input}"
-
-
 # premap to contamination
-
-
 rule premap_align_pe:
     input:
         fq1=TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz",
@@ -430,8 +402,6 @@ rule premap_align_pe:
             --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
             {PATH.samtools} view -@ {threads} -e 'flag.proper_pair && !flag.unmap && !flag.munmap && qlen-sclen >= 30 && [XM] * 15 < (qlen-sclen)' -O BAM -U {output.unmapped} -o {output.mapped}
         """
-
-
 rule premap_align_se:
     input:
         fq=TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz",
@@ -465,10 +435,6 @@ rule premap_align_se:
 
 
 rule finalize_premap_summary:
-    benchmark:
-        BENCHDIR / "finalize_premap_summary_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_premap_summary.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"premap/PE/{wildcards.sample}_{wildcards.rn}.summary"
@@ -477,43 +443,31 @@ rule finalize_premap_summary:
         ),
     output:
         INTERNALDIR / "stats/premap/{sample}_{rn}.summary",
+    benchmark:
+        BENCHDIR / "finalize_premap_summary_{sample}_{rn}.benchmark.txt"
     shell:
         "cp {input} {output}"
 
 
-rule premap_fixmate_pe:
-    benchmark:
-        BENCHDIR / "premap_fixmate_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "premap_fixmate_pe.benchmark.txt"
+rule premap_fixmate:
     input:
-        TEMPDIR / "premap/PE/{sample}_{rn}.contam.bam",
+        TEMPDIR / "premap/{libmode}/{sample}_{rn}.contam.bam",
     output:
-        temp(TEMPDIR / "premap/PE/{sample}_{rn}.fixmate.bam"),
+        temp(TEMPDIR / "premap/{libmode}/{sample}_{rn}.fixmate.bam"),
     threads: 8
-    shell:
-        "{PATH.samtools} fixmate -@ {threads} -m -O BAM {input} {output}"
-
-
-rule premap_fixmate_se:
     benchmark:
-        BENCHDIR / "premap_fixmate_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "premap_fixmate_se.benchmark.txt"
-    input:
-        TEMPDIR / "premap/SE/{sample}_{rn}.contam.bam",
-    output:
-        temp(TEMPDIR / "premap/SE/{sample}_{rn}.fixmate.bam"),
-    threads: 8
+        BENCHDIR / "premap_fixmate_{libmode}_{sample}_{rn}.benchmark.txt"
     shell:
-        "cp {input} {output}"
+        """
+        if [ "{wildcards.libmode}" == "PE" ]; then
+            {PATH.samtools} fixmate -@ {threads} -m -O BAM {input} {output}
+        else
+            cp {input} {output}
+        fi
+        """
 
 
 rule finalize_premap_bam:
-    benchmark:
-        BENCHDIR / "finalize_premap_bam_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_premap_bam.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"premap/PE/{wildcards.sample}_{wildcards.rn}.fixmate.bam"
@@ -524,38 +478,27 @@ rule finalize_premap_bam:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.contamination.bam",
     threads: 16
     priority: 4
+    benchmark:
+        BENCHDIR / "finalize_premap_bam_{sample}_{rn}.benchmark.txt"
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
-rule premap_get_unmapped_pe:
-    benchmark:
-        BENCHDIR / "premap_get_unmapped_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "premap_get_unmapped_pe.benchmark.txt"
+rule premap_get_unmapped:
     input:
-        un=TEMPDIR / "premap/PE/{sample}_{rn}.unmap.bam",
+        un=TEMPDIR / "premap/{libmode}/{sample}_{rn}.unmap.bam",
     output:
-        r1=temp(TEMPDIR / "unmapped/premap/PE/{sample}_{rn}_R1.fq.gz"),
-        r2=temp(TEMPDIR / "unmapped/premap/PE/{sample}_{rn}_R2.fq.gz"),
+        r1=temp(TEMPDIR / "unmapped/premap/{libmode}/{sample}_{rn}_R1.fq.gz"),
+        r2=temp(TEMPDIR / "unmapped/premap/{libmode}/{sample}_{rn}_R2.fq.gz"),
+    benchmark:
+        BENCHDIR / "premap_get_unmapped_{libmode}_{sample}_{rn}.benchmark.txt"
     shell:
         """
-        {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
-        """
-
-
-rule premap_get_unmapped_se:
-    benchmark:
-        BENCHDIR / "premap_get_unmapped_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "premap_get_unmapped_se.benchmark.txt"
-    input:
-        un=TEMPDIR / "premap/SE/{sample}_{rn}.unmap.bam",
-    output:
-        r1=temp(TEMPDIR / "unmapped/premap/SE/{sample}_{rn}_R1.fq.gz"),
-    shell:
-        """
-        {PATH.samtools} fastq -0 {output.r1} -n {input}
+        if [ "{wildcards.libmode}" == "PE" ]; then
+            {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
+        else
+            {PATH.samtools} fastq -0 {output.r1} -n {input}
+        fi
         """
 
 
@@ -625,8 +568,6 @@ rule mainmap_align_pe:
         + ("-o {output.mp1} " if HAS_GENES else "")
         + "-o {output.mp2} -u {output.um} && "
         "touch {output.summary}"
-
-
 rule mainmap_align_se:
     input:
         fq=lambda wildcards: (
@@ -653,13 +594,7 @@ rule mainmap_align_se:
         + ("-o {output.mp1} " if HAS_GENES else "")
         + "-o {output.mp2} -u {output.um} && "
         "touch {output.summary}"
-
-
 rule finalize_mainmap_summary:
-    benchmark:
-        BENCHDIR / "finalize_mainmap_summary_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_mainmap_summary.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"mainmap/PE/{wildcards.sample}_{wildcards.rn}.summary"
@@ -668,10 +603,11 @@ rule finalize_mainmap_summary:
         ),
     output:
         INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
+    benchmark:
+        BENCHDIR / "finalize_mainmap_summary_{sample}_{rn}.benchmark.txt"
+        BENCHDIR / "finalize_mainmap_summary.benchmark.txt"
     shell:
         "cp {input} {output}"
-
-
 rule finalize_mainmap_genes_bam:
     input:
         lambda wildcards: (
@@ -681,16 +617,13 @@ rule finalize_mainmap_genes_bam:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.genes.bam",
-    threads: 12
+    benchmark:
+        BENCHDIR / "finalize_mainmap_genes_bam_{sample}_{rn}.benchmark.txt"
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
 rule finalize_mainmap_transcript_bam:
-    benchmark:
-        BENCHDIR / "finalize_mainmap_transcript_bam_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_mainmap_transcript_bam.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR
@@ -699,35 +632,32 @@ rule finalize_mainmap_transcript_bam:
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.transcript.bam",
     threads: 12
+    benchmark:
+        BENCHDIR / "finalize_mainmap_transcript_bam_{sample}_{rn}.benchmark.txt"
+        BENCHDIR / "finalize_mainmap_transcript_bam.benchmark.txt"
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
-
-
 rule mainmap_get_unmapped_pe:
-    benchmark:
-        BENCHDIR / "mainmap_get_unmapped_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "mainmap_get_unmapped_pe.benchmark.txt"
     input:
         un=TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam",
     output:
         r1=temp(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R1.fq.gz"),
         r2=temp(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz"),
+    benchmark:
+        BENCHDIR / "mainmap_get_unmapped_pe_{sample}_{rn}.benchmark.txt"
+        BENCHDIR / "mainmap_get_unmapped_pe.benchmark.txt"
     shell:
         """
         {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
         """
-
-
 rule mainmap_get_unmapped_se:
-    benchmark:
-        BENCHDIR / "mainmap_get_unmapped_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "mainmap_get_unmapped_se.benchmark.txt"
     input:
         un=TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam",
     output:
         r1=temp(TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz"),
+    benchmark:
+        BENCHDIR / "mainmap_get_unmapped_se_{sample}_{rn}.benchmark.txt"
+        BENCHDIR / "mainmap_get_unmapped_se.benchmark.txt"
     shell:
         """
         {PATH.samtools} fastq -0 {output.r1} -n {input}
@@ -738,16 +668,14 @@ rule mainmap_get_unmapped_se:
 
 
 rule remap_align_pe:
-    benchmark:
-        BENCHDIR / "remap_align_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_align_pe.benchmark.txt"
     input:
         fq1=TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R1.fq.gz",
         fq2=TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz",
     output:
-        bam=temp(TEMPDIR / "remap/PE/{sample}_{rn}.genome.bam"),
+        bam=temp(TEMPDIR / "remap/PE/{sample}_{rn}.mapped.bam"),
         summary=temp(TEMPDIR / "remap/PE/{sample}_{rn}.summary"),
+        report=temp(TEMPDIR / "remap/PE/{sample}_{rn}.report.json"),
+        unmapped=temp(TEMPDIR / "remap/PE/{sample}_{rn}.final_unmap.bam"),
     params:
         index=REF["genome"]["hisat3n"],
         basechange=config.get("base_change", "A,G"),
@@ -762,24 +690,24 @@ rule remap_align_pe:
             else "--no-spliced-alignment"
         ),
     threads: 16
+    benchmark:
+        BENCHDIR / "remap_align_pe_{sample}_{rn}.benchmark.txt"
     shell:
         """
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -@ {threads} -O BAM -o {output.bam}
+            {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
 rule remap_align_se:
-    benchmark:
-        BENCHDIR / "remap_align_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_align_se.benchmark.txt"
     input:
         fq=TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz",
     output:
-        bam=temp(TEMPDIR / "remap/SE/{sample}_{rn}.genome.bam"),
+        bam=temp(TEMPDIR / "remap/SE/{sample}_{rn}.mapped.bam"),
         summary=temp(TEMPDIR / "remap/SE/{sample}_{rn}.summary"),
+        report=temp(TEMPDIR / "remap/SE/{sample}_{rn}.report.json"),
+        unmapped=temp(TEMPDIR / "remap/SE/{sample}_{rn}.final_unmap.bam"),
     params:
         index=REF["genome"]["hisat3n"],
         basechange=config.get("base_change", "A,G"),
@@ -794,19 +722,15 @@ rule remap_align_se:
             else "--no-spliced-alignment"
         ),
     threads: 16
+    benchmark:
+        BENCHDIR / "remap_align_se_{sample}_{rn}.benchmark.txt"
     shell:
         """
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -@ {threads} -o {output.bam}
+            {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
-
-
 rule finalize_remap_summary:
-    benchmark:
-        BENCHDIR / "finalize_remap_summary_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_remap_summary.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR / f"remap/PE/{wildcards.sample}_{wildcards.rn}.summary"
@@ -815,182 +739,56 @@ rule finalize_remap_summary:
         ),
     output:
         INTERNALDIR / "stats/remap/{sample}_{rn}.summary",
+    benchmark:
+        BENCHDIR / "finalize_remap_summary_{sample}_{rn}.benchmark.txt"
+        BENCHDIR / "finalize_remap_summary.benchmark.txt"
     shell:
         "cp {input} {output}"
-
-
-rule remap_fixmate_pe:
-    benchmark:
-        BENCHDIR / "remap_fixmate_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_fixmate_pe.benchmark.txt"
-    input:
-        TEMPDIR / "remap/PE/{sample}_{rn}.genome.bam",
-    output:
-        temp(TEMPDIR / "remap/PE/{sample}_{rn}.fixmate.bam"),
-    threads: 8
-    shell:
-        "{PATH.samtools} fixmate -@ {threads} -m -O BAM {input} {output}"
-
-
-rule remap_fixmate_se:
-    benchmark:
-        BENCHDIR / "remap_fixmate_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_fixmate_se.benchmark.txt"
-    input:
-        TEMPDIR / "remap/SE/{sample}_{rn}.genome.bam",
-    output:
-        temp(TEMPDIR / "remap/SE/{sample}_{rn}.fixmate.bam"),
-    threads: 8
-    shell:
-        "cp {input} {output}"
-
-
-rule remap_tag_pe:
-    benchmark:
-        BENCHDIR / "remap_tag_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_tag_pe.benchmark.txt"
-    input:
-        TEMPDIR / "remap/PE/{sample}_{rn}.fixmate.bam",
-    output:
-        temp(TEMPDIR / "remap/PE/{sample}_{rn}.tagged.bam"),
-    params:
-        strand=lambda wildcards: (
-            "0" if SAMPLE2LIB[wildcards.sample] == "UNSTRANDED" else "1"
-        ),
-    threads: 12
-    shell:
-        "{PATH.bam_tag} {input} {output} --threads {threads} --strand-type {params.strand}"
-
-
-rule remap_tag_se:
-    benchmark:
-        BENCHDIR / "remap_tag_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_tag_se.benchmark.txt"
-    input:
-        TEMPDIR / "remap/SE/{sample}_{rn}.fixmate.bam",
-    output:
-        temp(TEMPDIR / "remap/SE/{sample}_{rn}.tagged.bam"),
-    params:
-        strand=lambda wildcards: (
-            "0" if SAMPLE2LIB[wildcards.sample] == "UNSTRANDED" else "1"
-        ),
-    threads: 12
-    shell:
-        "{PATH.bam_tag} {input} {output} --threads {threads} --strand-type {params.strand}"
-
-
-rule remap_filter_sort_pe:
-    benchmark:
-        BENCHDIR / "remap_filter_sort_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_filter_sort_pe.benchmark.txt"
-    input:
-        TEMPDIR / "remap/PE/{sample}_{rn}.tagged.bam",
-    output:
-        unmap=temp(TEMPDIR / "remap/PE/{sample}_{rn}.final_unmap.bam"),
-        mapped=temp(TEMPDIR / "remap/PE/{sample}_{rn}.mapped.bam"),
-        report=temp(TEMPDIR / "remap/PE/{sample}_{rn}.report.json"),
-    threads: 12
-    shell:
-        """
-        {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmap} --save-counts {output.report} -h {input} |\
-            {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.mapped}
-        """
-
-
-rule remap_filter_sort_se:
-    benchmark:
-        BENCHDIR / "remap_filter_sort_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_filter_sort_se.benchmark.txt"
-    input:
-        TEMPDIR / "remap/SE/{sample}_{rn}.tagged.bam",
-    output:
-        unmap=temp(TEMPDIR / "remap/SE/{sample}_{rn}.final_unmap.bam"),
-        mapped=temp(TEMPDIR / "remap/SE/{sample}_{rn}.mapped.bam"),
-        report=temp(TEMPDIR / "remap/SE/{sample}_{rn}.report.json"),
-    threads: 12
-    shell:
-        """
-        {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmap} --save-counts {output.report} -h {input} |\
-            {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.mapped}
-        """
-
-
 rule finalize_genome_bam:
-    benchmark:
-        BENCHDIR / "finalize_genome_bam_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_genome_bam.benchmark.txt"
     input:
         lambda wildcards: (
-            TEMPDIR / f"remap/PE/{wildcards.sample}_{wildcards.rn}.mapped.bam"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR / f"remap/SE/{wildcards.sample}_{wildcards.rn}.mapped.bam"
+            TEMPDIR / f"remap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.mapped.bam"
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.genome.bam",
+    benchmark:
+        BENCHDIR / "finalize_genome_bam_{sample}_{rn}.benchmark.txt"
     shell:
         "cp {input} {output}"
 
 
 rule finalize_genome_report:
-    benchmark:
-        BENCHDIR / "finalize_genome_report_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_genome_report.benchmark.txt"
     input:
         lambda wildcards: (
-            TEMPDIR / f"remap/PE/{wildcards.sample}_{wildcards.rn}.report.json"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR / f"remap/SE/{wildcards.sample}_{wildcards.rn}.report.json"
+            TEMPDIR / f"remap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.report.json"
         ),
     output:
         INTERNALDIR / "stats/filter/{sample}_{rn}.genome.json",
+    benchmark:
+        BENCHDIR / "finalize_genome_report_{sample}_{rn}.benchmark.txt"
     shell:
         "cp {input} {output}"
 
 
-rule remap_get_unmapped_pe:
-    benchmark:
-        BENCHDIR / "remap_get_unmapped_pe_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_get_unmapped_pe.benchmark.txt"
+rule remap_get_unmapped:
     input:
-        un=TEMPDIR / "remap/PE/{sample}_{rn}.final_unmap.bam",
+        un=TEMPDIR / "remap/{libmode}/{sample}_{rn}.final_unmap.bam",
     output:
-        r1=temp(TEMPDIR / "unmapped/remap/PE/{sample}_{rn}_R1.fq.gz"),
-        r2=temp(TEMPDIR / "unmapped/remap/PE/{sample}_{rn}_R2.fq.gz"),
+        r1=temp(TEMPDIR / "unmapped/remap/{libmode}/{sample}_{rn}_R1.fq.gz"),
+        r2=temp(TEMPDIR / "unmapped/remap/{libmode}/{sample}_{rn}_R2.fq.gz"),
+    benchmark:
+        BENCHDIR / "remap_get_unmapped_{libmode}_{sample}_{rn}.benchmark.txt"
     shell:
         """
-        {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
-        """
-
-
-rule remap_get_unmapped_se:
-    benchmark:
-        BENCHDIR / "remap_get_unmapped_se_{sample}_{rn}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "remap_get_unmapped_se.benchmark.txt"
-    input:
-        un=TEMPDIR / "remap/SE/{sample}_{rn}.final_unmap.bam",
-    output:
-        r1=temp(TEMPDIR / "unmapped/remap/SE/{sample}_{rn}_R1.fq.gz"),
-    shell:
-        """
-        {PATH.samtools} fastq -0 {output.r1} -n {input}
+        if [ "{wildcards.libmode}" == "PE" ]; then
+            {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
+        else
+            {PATH.samtools} fastq -0 {output.r1} -n {input}
+        fi
         """
 
 
 rule finalize_unmapped_fq:
-    benchmark:
-        BENCHDIR / "finalize_unmapped_fq_{sample}_{rn}_{rd}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "finalize_unmapped_fq.benchmark.txt"
     input:
         lambda wildcards: (
             TEMPDIR
@@ -1001,15 +799,13 @@ rule finalize_unmapped_fq:
         ),
     output:
         INTERNALDIR / "fastq/unmapped/{sample}_{rn}_{rd}.fq.gz",
+    benchmark:
+        BENCHDIR / "finalize_unmapped_fq_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
         "cp {input} {output}"
 
 
 rule unmapped_qc:
-    benchmark:
-        BENCHDIR / "unmapped_qc_{sample}_{rn}_{rd}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "unmapped_qc.benchmark.txt"
     input:
         INTERNALDIR / "fastq/unmapped/{sample}_{rn}_{rd}.fq.gz",
     output:
@@ -1019,13 +815,13 @@ rule unmapped_qc:
     params:
         lambda wildcards: INTERNALDIR
         / f"qc/fastqc_unmapped/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
+    benchmark:
+        BENCHDIR / "unmapped_qc_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
         "{PATH.falco} -o {params} {input}"
 
 
 rule unmapped_report:
-    benchmark:
-        BENCHDIR / "unmapped_report.benchmark.txt"
     input:
         [
             INTERNALDIR / f"qc/fastqc_unmapped/{s}_{r}_{i}/fastqc_data.txt"
@@ -1036,6 +832,8 @@ rule unmapped_report:
         ],
     output:
         "report_reads/unmapped.html",
+    benchmark:
+        BENCHDIR / "unmapped_report.benchmark.txt"
     shell:
         "{PATH.multiqc} -f -m fastqc -n {output} {input}"
 
@@ -1046,10 +844,6 @@ rule unmapped_report:
 
 
 rule combine_bams:
-    benchmark:
-        BENCHDIR / "combine_bams_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "combine_bams.benchmark.txt"
     input:
         lambda wildcards: [
             INTERNALDIR / f"bam/per_run/{wildcards.sample}_{r}.{wildcards.reftype}.bam"
@@ -1059,6 +853,8 @@ rule combine_bams:
         bam=temp(TEMPDIR / "combined/{sample}.{reftype}.bam"),
         bai=temp(TEMPDIR / "combined/{sample}.{reftype}.bam.bai"),
     threads: 12
+    benchmark:
+        BENCHDIR / "combine_bams_{sample}_{reftype}.benchmark.txt"
     shell:
         """
         {PATH.samtools} merge -@ {threads} -f --write-index -o {output.bam}##idx##{output.bai} {input}
@@ -1066,16 +862,14 @@ rule combine_bams:
 
 
 rule stat_combined:
-    benchmark:
-        BENCHDIR / "stat_combined_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "stat_combined.benchmark.txt"
     input:
         bam=TEMPDIR / "combined/{sample}.{reftype}.bam",
     output:
         stat=INTERNALDIR / "stats/combined/{sample}.{reftype}.txt",
         n=INTERNALDIR / "stats/combined/{sample}.{reftype}.count",
     threads: 4
+    benchmark:
+        BENCHDIR / "stat_combined_{sample}_{reftype}.benchmark.txt"
     shell:
         """
         {PATH.samtools} flagstat -@ {threads} -O TSV {input} > {output.stat}
@@ -1084,10 +878,6 @@ rule stat_combined:
 
 
 rule drop_duplicates:
-    benchmark:
-        BENCHDIR / "drop_duplicates_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "drop_duplicates.benchmark.txt"
     input:
         bam=TEMPDIR / "combined/{sample}.{reftype}.bam",
         bai=TEMPDIR / "combined/{sample}.{reftype}.bam.bai",
@@ -1095,35 +885,33 @@ rule drop_duplicates:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
         txt=INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
     threads: 16
+    benchmark:
+        BENCHDIR / "drop_duplicates_{sample}_{reftype}.benchmark.txt"
     shell:
         "{PATH.markdup} -t {threads} -i {input.bam} -o {output.bam} --report {output.txt}"
 
 
 rule dedup_index:
-    benchmark:
-        BENCHDIR / "dedup_index_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "dedup_index.benchmark.txt"
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
         bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
     threads: 8
+    benchmark:
+        BENCHDIR / "dedup_index_{sample}_{reftype}.benchmark.txt"
     shell:
         "{PATH.samtools} index -@ {threads} {input}"
 
 
 rule stat_dedup:
-    benchmark:
-        BENCHDIR / "stat_dedup_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "stat_dedup.benchmark.txt"
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
         stat=INTERNALDIR / "stats/dedup/{sample}.{reftype}.txt",
         n=INTERNALDIR / "stats/dedup/{sample}.{reftype}.count",
     threads: 4
+    benchmark:
+        BENCHDIR / "stat_dedup_{sample}_{reftype}.benchmark.txt"
     shell:
         """
         {PATH.samtools} flagstat -@ {threads} -O TSV {input} > {output.stat}
@@ -1132,10 +920,6 @@ rule stat_dedup:
 
 
 rule liftover_transcript_to_genome:
-    benchmark:
-        BENCHDIR / "liftover_transcript_to_genome_{sample}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "liftover_transcript_to_genome.benchmark.txt"
     input:
         transcripts=INTERNALDIR / "bam/{sample}.transcript.bam",
         genome=INTERNALDIR / "bam/{sample}.genome.bam",
@@ -1146,6 +930,8 @@ rule liftover_transcript_to_genome:
     params:
         fai=REF["genome"]["fa"] + ".fai",
     threads: 8
+    benchmark:
+        BENCHDIR / "liftover_transcript_to_genome_{sample}.benchmark.txt"
     shell:
         """
         coralsnake liftover -t {threads} -i {input.transcripts} -o {output.transcripts} -a {input.info} -f {params.fai}
@@ -1154,10 +940,6 @@ rule liftover_transcript_to_genome:
 
 
 rule count_reads:
-    benchmark:
-        BENCHDIR / "count_reads_{sample}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "count_reads.benchmark.txt"
     input:
         report=lambda wildcards: [
             INTERNALDIR / f"qc/trimming/{wildcards.sample}_{r}.json"
@@ -1182,6 +964,8 @@ rule count_reads:
     output:
         INTERNALDIR / "stats/count/{sample}.tsv",
     threads: 2
+    benchmark:
+        BENCHDIR / "count_reads_{sample}.benchmark.txt"
     shell:
         """
         printf "Raw\\t"$(grep -h -P 'input": [0-9]+,' -m 1 {input.report} |awk '{{ gsub(",","",$NF);a+=$NF }}END{{ print a }}')"\\n" > {output}
@@ -1203,40 +987,32 @@ rule count_reads:
         printf "Genome_Passed\\t"$(cat {input.count7})"\\n" >> {output}
         printf "Genome_Dedup\\t"$(cat {input.count8})"\\n" >> {output}
         """
-
-
 rule insert_size:
-    benchmark:
-        BENCHDIR / "insert_size_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "insert_size.benchmark.txt"
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
         tsv=INTERNALDIR / "stats/rlen/{sample}.{reftype}.isize.tsv",
     threads: 8
+    benchmark:
+        BENCHDIR / "insert_size_{sample}_{reftype}.benchmark.txt"
+        BENCHDIR / "insert_size.benchmark.txt"
     shell:
         """
         {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^IS|cut -f 2- > {output}
         """
-
-
 rule read_length:
-    benchmark:
-        BENCHDIR / "read_length_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "read_length.benchmark.txt"
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
         tsv=INTERNALDIR / "stats/rlen/{sample}.{reftype}.rlen.tsv",
     threads: 8
+    benchmark:
+        BENCHDIR / "read_length_{sample}_{reftype}.benchmark.txt"
+        BENCHDIR / "read_length.benchmark.txt"
     shell:
         """
         {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^RL | cut -f 2- > {output}
         """
-
-
 ###################
 # call sites
 ###################
@@ -1254,6 +1030,8 @@ rule cal_spike_ratio:
     output:
         tsv=INTERNALDIR / "stats/ratio/probe.tsv",
     threads: 8
+    benchmark:
+        BENCHDIR / "cal_spike_ratio.benchmark.txt"
     shell:
         """
         {PATH.bam_conv} {input.bam} > {output}
@@ -1261,10 +1039,6 @@ rule cal_spike_ratio:
 
 
 rule run_countmut:
-    benchmark:
-        BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
-    benchmark:
-        BENCHDIR / "run_countmut.benchmark.txt"
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
         bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
@@ -1279,10 +1053,12 @@ rule run_countmut:
         ),
     output:
         temp(TEMPDIR / "pileup/{sample}.{reftype}.tsv"),
-    threads: 12
     params:
         ref_base=lambda wildcards: "C" if config.get("pileup_ct", False) else "A",
         mut_base=lambda wildcards: "T" if config.get("pileup_ct", False) else "G",
+    threads: 12
+    benchmark:
+        BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
     shell:
         "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} --ref-base {params.ref_base} --mut-base {params.mut_base} -f > /dev/null"
 
@@ -1398,9 +1174,7 @@ rule group_and_pval_cal:
         """
 
 
-###################
 # multiqc custom
-###################
 
 
 rule aggregate_multiqc_stats:
@@ -1469,8 +1243,3 @@ rule generate_site_report:
         BENCHDIR / "generate_site_report.benchmark.txt"
     shell:
         "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir}"
-
-
-###################
-# multiqc custom
-###################
