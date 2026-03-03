@@ -1,18 +1,23 @@
+# Dichromat Production Config Template
 samples:
-  smoke:
-    libtype: "STRANDED"
-    data:
-      - R1: "internal_files/fastq/PE/smoke_run1_R1.fq.gz"
-        R2: "internal_files/fastq/PE/smoke_run1_R2.fq.gz"
+  # Example:
+  # sample1:
+  #   libtype: "STRANDED"
+  #   data:
+  #     - R1: "path/to/R1.fq.gz"
+  #       R2: "path/to/R2.fq.gz"
 
 reference:
   genome:
-    fa: "ref/genome/smoke.fa"
-    gtf: "/dev/null"
+    fa: "ref/genome/genome.fa"
+    gtf: "ref/genome/genome.gtf"
     hisat3n: "internal_files/ref/genome/index"
 
-markdup: false
-base_change: "A,G"
+# Global Settings
+base_change: "C,T"
+is_etam: false
+markdup: true
+container: "development/dichromat.sif"
 
 path:
   hisat3n: "hisat3n"
