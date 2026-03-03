@@ -31,6 +31,7 @@ splice_genome: true
 splice_contamination: false
 pileup_ct: false
 depth_site: false
+secondary_change: ""
 
 # Minimum depth for sites to be included in merged output
 # Lower values include more sites but may increase noise

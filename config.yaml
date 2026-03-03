@@ -1,23 +1,31 @@
-# Dichromat Production Config Template
-samples:
-  # Example:
-  # sample1:
-  #   libtype: "STRANDED"
-  #   data:
-  #     - R1: "path/to/R1.fq.gz"
-  #       R2: "path/to/R2.fq.gz"
+container: "development/dichromat.sif"
+is_etam: true
+skip_samples:
+  - "sample1-FTO"
+  - "sample1-IVT"
+
+adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
+
+base_change: 'A,G'
+secondary_change: 'C,T'
+splice_genome: true
+depth_site: true
 
 reference:
+  contamination:
+    - ~/reference/contamination/contamination.fa
+    - ref/PET28a-tadA.fa
+  genes:
+    - ~/reference/genes/Homo_sapiens.rRNA_tRNA_sncRNA.fa
   genome:
-    fa: "ref/genome/genome.fa"
-    gtf: "ref/genome/genome.gtf"
-    hisat3n: "internal_files/ref/genome/index"
+    fa: ~/reference/genome/Homo_sapiens/GRCh38.fa
+    gtf: ~/reference/genome/Homo_sapiens/GRCh38.release110.gtf
+    hisat3n: ~/reference/genome/Homo_sapiens/hisat2_tx_3n/GRCh38.release110
 
-# Global Settings
-base_change: "C,T"
-is_etam: false
-markdup: true
-container: "development/dichromat.sif"
+samples:
+  sample1:
+    data:
+      - R1: ~/scratch/debug.fq.gz
 
 path:
   hisat3n: "hisat3n"

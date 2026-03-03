@@ -4,7 +4,7 @@ ARG FALCO_VERSION="1.2.3"
 ARG PYTHON_VERSION_FOR_APP="3.13"
 
 # ----------- Builder Stage (Heavy) -----------
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+FROM python:3.13-slim-bookworm AS builder
 
 ARG SAMTOOLS_VERSION
 ARG FALCO_VERSION
@@ -20,6 +20,9 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     zlib1g-dev libxml2-dev libbz2-dev liblzma-dev \
     git binutils && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # --- Create Isolated Environments ---
 ENV APP_VENV_PATH=/opt/app_venv
@@ -57,16 +60,20 @@ RUN curl -L --http1.1 --retry 5 https://github.com/samtools/htslib/releases/down
     mv bgzip /usr/local/bin/ && \
     rm -rf *
 
-# --- Download & Install PRE-BUILT hisat3n (v0.1.14 with static linking) ---
-RUN curl -L https://github.com/y9c/hisat2/releases/download/v0.1.14/hisat3n-linux-x86_64.tar.gz -o hisat3n.tar.gz && \
-    tar -xzvf hisat3n.tar.gz && \
-    mv hisat3n-bin/* /usr/local/bin/ && \
-    rm -rf hisat3n.tar.gz hisat3n-bin
+# --- Build hisat3n from local fork ---
+WORKDIR /build/hisat2
+COPY development/hisat2_fork/ ./
+RUN make -j$(nproc) hisat2-align-s hisat2-build-s hisat2-inspect-s EXTRA_FLAGS="-static-libstdc++ -static-libgcc -mavx2" && \
+    g++ -O3 -o hisat3n hisat2_wrapper.cpp -static-libstdc++ -static-libgcc && \
+    strip hisat2-align-s hisat2-build-s hisat2-inspect-s hisat3n && \
+    mv hisat2-align-s hisat2-build-s hisat2-inspect-s hisat3n /usr/local/bin/ && \
+    rm -rf /build/hisat2
 
 # --- Build Falco ---
-RUN curl -L --http1.1 --retry 5 https://github.com/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}.tar.gz -o falco.tar.gz && \
+WORKDIR /build/falco
+RUN curl -L https://github.com/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}.tar.gz -o falco.tar.gz && \
     tar -xzvf falco.tar.gz && cd falco-* && ./configure && make -j$(nproc) && strip falco && \
-    mv falco /usr/local/bin/ && cd .. && rm -rf falco*
+    mv falco /usr/local/bin/ && cd .. && rm -rf /build/falco
 
 # --- CLEANUP ---
 RUN find /opt -name "__pycache__" -type d -exec rm -rf {} + && \
@@ -74,7 +81,7 @@ RUN find /opt -name "__pycache__" -type d -exec rm -rf {} + && \
 
 
 # ----------- Final Stage -----------
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS final
+FROM python:3.13-slim-bookworm AS final
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIPELINE_HOME=/pipeline
