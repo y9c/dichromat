@@ -68,6 +68,7 @@ RUN curl -L https://github.com/y9c/hisat2/archive/refs/tags/v0.1.16.tar.gz -o hi
     g++ -O3 -o hisat3n hisat2_wrapper.cpp -static-libstdc++ -static-libgcc && \
     strip hisat2-align-s hisat2-build-s hisat2-inspect-s hisat3n && \
     mv hisat2-align-s hisat2-build-s hisat2-inspect-s hisat3n /usr/local/bin/ && \
+    ln -s /usr/local/bin/hisat3n /usr/local/bin/hisat-3n && \
     rm -rf /build/hisat2
 
 # --- Build Falco ---
