@@ -767,10 +767,11 @@ rule finalize_genome_bam:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.genome.bam",
+    threads: 16
     benchmark:
         BENCHDIR / "finalize_genome_bam_{sample}_{rn}.benchmark.txt"
     shell:
-        "cp {input} {output}"
+        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
 rule finalize_genome_report:
@@ -874,6 +875,7 @@ rule combine_bams:
         BENCHDIR / "combine_bams_{sample}_{reftype}.benchmark.txt"
     shell:
         """
+        mkdir -p $(dirname {output.bam})
         {PATH.samtools} merge -@ {threads} -f --write-index -o {output.bam}##idx##{output.bai} {input}
         """
 
