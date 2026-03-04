@@ -13,8 +13,6 @@ logo="
 
 printf "$logo\n"
 
-set -e
-
 # Get project directory
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -52,32 +50,48 @@ if [ -z "$BATCH" ]; then
 fi
 
 # Create workspace directory
-mkdir -p "${PROJECT_DIR}/workspace_${BATCH}"
+WORKSPACE_DIR="${PROJECT_DIR}/workspace_${BATCH}"
+mkdir -p "${WORKSPACE_DIR}"
 
 # Set up log file
 export LC_ALL=C.UTF-8
-LOGFILE="${PROJECT_DIR}/workspace_${BATCH}/dichromat_LOG_$(date +"%F-%H%M%S").txt"
+LOGFILE="${WORKSPACE_DIR}/dichromat_LOG_$(date +"%F-%H%M%S").txt"
 
-echo -e "\033[0;32mLog file:\033[0m ${LOGFILE}"
-echo "Starting pipeline..."
-
-# Run snakemake directly
-cd "${PROJECT_DIR}"
-
+# Snakemake binary detection
 if [ -d "${PROJECT_DIR}/development/.venv" ]; then
     SNAKEMAKE_BIN="${PROJECT_DIR}/development/.venv/bin/snakemake"
 else
     SNAKEMAKE_BIN="snakemake"
 fi
 
-# Run snakemake - profile must be specified by user for SLURM
+# --- Trap Setup ---
+# This ensures that if the script is interrupted (Ctrl-C), 
+# it properly cleans up Snakemake locks.
+cleanup_locks() {
+    echo -e "\n\033[1;33m⚠️  Interrupt received. Cleaning up Snakemake locks...\033[0m"
+    "$SNAKEMAKE_BIN" \
+        --configfile "${PROJECT_DIR}/config.yaml" \
+        -s "${PROJECT_DIR}/Snakefile" \
+        --directory "${WORKSPACE_DIR}" \
+        --config batch="$BATCH" \
+        --unlock >> "${LOGFILE}" 2>&1
+    echo -e "\033[0;32m✓ Locks cleaned. Exiting.\033[0m"
+    exit 1
+}
+
+trap cleanup_locks SIGINT SIGTERM
+
+echo -e "\033[0;32mLog file:\033[0m ${LOGFILE}"
+echo "Starting pipeline..."
+
+# Run snakemake
 echo "Running pipeline... (output logged to: ${LOGFILE})"
 
 "$SNAKEMAKE_BIN" \
     --configfile "${PROJECT_DIR}/config.yaml" \
     -p --rerun-incomplete \
     -s "${PROJECT_DIR}/Snakefile" \
-    --directory "${PROJECT_DIR}/workspace_${BATCH}" \
+    --directory "${WORKSPACE_DIR}" \
     --config batch="$BATCH" \
     -j 100 \
     --use-singularity \

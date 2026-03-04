@@ -161,7 +161,9 @@ rule all:
         INTERNALDIR / "stats/ratio/probe.tsv" if HAS_GENES else [],
     benchmark:
         BENCHDIR / "all.benchmark.txt"
-# prepare refrule internal_readme:
+# prepare ref
+
+rule internal_readme:
     output:
         INTERNALDIR / "README.md",
     benchmark:
@@ -191,7 +193,8 @@ rule all:
             f.write("- `pileup/transcript.tsv.gz`: Merged transcriptome pileup.\n")
             f.write("- `pileup/genome.tsv.gz`: Merged genomic pileup.\n\n")
             f.write("---\n")
-            f.write("*Note: For final results (including merged `sites.tsv.gz`), see `report_reads/` and `report_sites/`.*\n")rule combine_contamination_fa:
+            f.write("*Note: For final results (including merged `sites.tsv.gz`), see `report_reads/` and `report_sites/`.*\n")
+rule combine_contamination_fa:
     input:
         REF.get("contamination", []) if "contamination" in REF else [],
     output:
@@ -204,7 +207,8 @@ rule all:
         mkdir -p $(dirname {output.fa})
         cat {input} > {output.fa}
         {PATH.samtools} faidx {output.fa} --fai-idx {output.fai}
-        """rule build_contamination_hisat3n_index:
+        """
+rule build_contamination_hisat3n_index:
     input:
         INTERNALDIR / "ref/contamination.fa",
     output:
@@ -221,7 +225,8 @@ rule all:
         rm -f {params.prefix}*.ht2
         {PATH.hisat3n} build -p {threads} --base-change {params.basechange} {input} {params.prefix}
         touch {output}
-        """rule combine_genes_fa:
+        """
+rule combine_genes_fa:
     input:
         REF.get("genes", []) if "genes" in REF else [],
     output:
@@ -234,7 +239,8 @@ rule all:
         mkdir -p $(dirname {output.fa})
         cat {input} > {output.fa}
         {PATH.samtools} faidx {output.fa} --fai-idx {output.fai}
-        """rule prepared_transcript_ref:
+        """
+rule prepared_transcript_ref:
     input:
         fa=REF["genome"]["fa"],
         gtf=REF["genome"]["gtf"],
@@ -248,7 +254,9 @@ rule all:
         mkdir -p $(dirname {output.info})
         coralsnake prepare -g {input.gtf} -f {input.fa} -o {output.info} -s {output.seq} -c -n -x -t -z
         """
-# cut adaptersrule trim_se:
+# cut adapters
+
+rule trim_se:
     input:
         lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
     output:
@@ -328,6 +336,7 @@ rule finalize_discarded_reads:
 
 # trimmed part qc
 
+
 rule qc_trimmed:
     input:
         lambda wildcards: (
@@ -344,7 +353,8 @@ rule qc_trimmed:
     benchmark:
         BENCHDIR / "qc_trimmed_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
-        "{PATH.falco} -o {params} {input}"rule report_qc_trimmed:
+        "{PATH.falco} -o {params} {input}"
+rule report_qc_trimmed:
     input:
         [
             INTERNALDIR / f"qc/fastqc/{sample}_{rn}_{rd}/fastqc_data.txt"
@@ -358,7 +368,9 @@ rule qc_trimmed:
         BENCHDIR / "report_qc_trimmed.benchmark.txt"
     shell:
         "{PATH.multiqc} -f -m fastqc -n {output} {input}"
-# premap to contaminationrule premap_align_pe:
+# premap to contamination
+
+rule premap_align_pe:
     input:
         fq1=TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz",
         fq2=TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz",
@@ -393,7 +405,8 @@ rule qc_trimmed:
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
             {PATH.samtools} view -@ {threads} -e 'flag.proper_pair && !flag.unmap && !flag.munmap && qlen-sclen >= 30 && [XM] * 15 < (qlen-sclen)' -O BAM -U {output.unmapped} -o {output.mapped}
-        """rule premap_align_se:
+        """
+rule premap_align_se:
     input:
         fq=TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz",
         idx=INTERNALDIR / "ref/contamination/index.indexed",
@@ -557,7 +570,8 @@ rule mainmap_align_pe:
         + "--index-dir {INTERNALDIR}/ref/transcript -r {input.rf2} -1 {input.fq1} -2 {input.fq2} "
         + ("-o {output.mp1} " if HAS_GENES else "")
         + "-o {output.mp2} -u {output.um} && "
-        "touch {output.summary}"rule mainmap_align_se:
+        "touch {output.summary}"
+rule mainmap_align_se:
     input:
         fq=lambda wildcards: (
             TEMPDIR / f"unmapped/premap/SE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
@@ -582,7 +596,8 @@ rule mainmap_align_pe:
         + "--index-dir {INTERNALDIR}/ref/transcript -r {input.rf2} -1 {input.fq} "
         + ("-o {output.mp1} " if HAS_GENES else "")
         + "-o {output.mp2} -u {output.um} && "
-        "touch {output.summary}"rule finalize_mainmap_summary:
+        "touch {output.summary}"
+rule finalize_mainmap_summary:
     input:
         lambda wildcards: (
             TEMPDIR / f"mainmap/PE/{wildcards.sample}_{wildcards.rn}.summary"
@@ -594,7 +609,8 @@ rule mainmap_align_pe:
     benchmark:
         BENCHDIR / "finalize_mainmap_summary_{sample}_{rn}.benchmark.txt"
     shell:
-        "cp {input} {output}" rule finalize_mainmap_genes_bam:
+        "cp {input} {output}" 
+rule finalize_mainmap_genes_bam:
     input:
         lambda wildcards: (
             TEMPDIR
@@ -620,7 +636,8 @@ rule finalize_mainmap_transcript_bam:
     benchmark:
         BENCHDIR / "finalize_mainmap_transcript_bam_{sample}_{rn}.benchmark.txt"
     shell:
-        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"rule mainmap_get_unmapped_pe:
+        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
+rule mainmap_get_unmapped_pe:
     input:
         un=TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam",
     output:
@@ -631,7 +648,8 @@ rule finalize_mainmap_transcript_bam:
     shell:
         """
         {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
-        """rule mainmap_get_unmapped_se:
+        """
+rule mainmap_get_unmapped_se:
     input:
         un=TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam",
     output:
@@ -645,6 +663,7 @@ rule finalize_mainmap_transcript_bam:
 
 
 # postmap to genome
+
 
 rule remap_align_pe:
     input:
@@ -717,7 +736,8 @@ rule remap_align_se:
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
             {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
-        """rule finalize_remap_summary:
+        """
+rule finalize_remap_summary:
     input:
         lambda wildcards: (
             TEMPDIR / f"remap/PE/{wildcards.sample}_{wildcards.rn}.summary"
@@ -729,7 +749,8 @@ rule remap_align_se:
     benchmark:
         BENCHDIR / "finalize_remap_summary_{sample}_{rn}.benchmark.txt"
     shell:
-        "cp {input} {output}"rule finalize_genome_bam:
+        "cp {input} {output}"
+rule finalize_genome_bam:
     input:
         lambda wildcards: (
             TEMPDIR / f"remap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.mapped.bam"
@@ -822,7 +843,7 @@ rule unmapped_report:
 
 #######################
 # combine runs
-#######################
+####################### 
 
 rule combine_bams:
     input:
@@ -962,7 +983,8 @@ rule count_reads:
         printf "Transcript_Dedup\\t"$(cat {input.count6})"\\n" >> {output}
         printf "Genome_Passed\\t"$(cat {input.count7})"\\n" >> {output}
         printf "Genome_Dedup\\t"$(cat {input.count8})"\\n" >> {output}
-        """rule insert_size:
+        """
+rule insert_size:
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
@@ -973,7 +995,8 @@ rule count_reads:
     shell:
         """
         {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^IS|cut -f 2- > {output}
-        """rule read_length:
+        """
+rule read_length:
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
     output:
@@ -987,7 +1010,7 @@ rule count_reads:
         """
 ###################
 # call sites
-###################
+################### 
 
 rule cal_spike_ratio:
     input:
@@ -1138,6 +1161,7 @@ rule group_and_pval_cal:
 
 
 # multiqc custom
+
 
 rule aggregate_multiqc_stats:
     input:
