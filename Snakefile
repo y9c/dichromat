@@ -260,9 +260,9 @@ rule trim_se:
     input:
         lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
     output:
-        c=temp(TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz"),
-        s=temp(TEMPDIR / "trim/SE/{sample}_{rn}_tooshort_R1.fq.gz"),
-        report=temp(TEMPDIR / "trim/SE/{sample}_{rn}.json"),
+        c=(TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz"),
+        s=(TEMPDIR / "trim/SE/{sample}_{rn}_tooshort_R1.fq.gz"),
+        report=(TEMPDIR / "trim/SE/{sample}_{rn}.json"),
     params:
         minlen=config.get("min_len", 20),
         cut=lambda wildcards: (
@@ -283,11 +283,11 @@ rule trim_pe:
         r1=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
         r2=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R2") or [],
     output:
-        c1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz"),
-        c2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz"),
-        s1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R1.fq.gz"),
-        s2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R2.fq.gz"),
-        report=temp(TEMPDIR / "trim/PE/{sample}_{rn}.json"),
+        c1=(TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz"),
+        c2=(TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz"),
+        s1=(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R1.fq.gz"),
+        s2=(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R2.fq.gz"),
+        report=(TEMPDIR / "trim/PE/{sample}_{rn}.json"),
     params:
         minlen=config.get("min_len", 20),
         cut=lambda wildcards: (
@@ -493,8 +493,8 @@ rule premap_get_unmapped:
     input:
         un=TEMPDIR / "premap/{libmode}/{sample}_{rn}.unmap.bam",
     output:
-        r1=temp(TEMPDIR / "unmapped/premap/{libmode}/{sample}_{rn}_R1.fq.gz"),
-        r2=temp(TEMPDIR / "unmapped/premap/{libmode}/{sample}_{rn}_R2.fq.gz"),
+        r1=(TEMPDIR / "unmapped/premap/{libmode}/{sample}_{rn}_R1.fq.gz"),
+        r2=(TEMPDIR / "unmapped/premap/{libmode}/{sample}_{rn}_R2.fq.gz"),
     benchmark:
         BENCHDIR / "premap_get_unmapped_{libmode}_{sample}_{rn}.benchmark.txt"
     shell:
@@ -558,7 +558,7 @@ rule mainmap_align_pe:
         idx2=INTERNALDIR / "ref/transcript/index.indexed",
     output:
         mp2=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.transcript.bam"),
-        um=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam"),
+        um=(TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam"),
         summary=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.summary"),
         mp1=[temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
     threads: 64
@@ -584,7 +584,7 @@ rule mainmap_align_se:
         idx2=INTERNALDIR / "ref/transcript/index.indexed",
     output:
         mp2=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.transcript.bam"),
-        um=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam"),
+        um=(TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam"),
         summary=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.summary"),
         mp1=[temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
     threads: 64
@@ -642,8 +642,8 @@ rule mainmap_get_unmapped_pe:
     input:
         un=TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam",
     output:
-        r1=temp(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R1.fq.gz"),
-        r2=temp(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz"),
+        r1=(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R1.fq.gz"),
+        r2=(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz"),
     benchmark:
         BENCHDIR / "mainmap_get_unmapped_pe_{sample}_{rn}.benchmark.txt"
     shell:
@@ -654,7 +654,7 @@ rule mainmap_get_unmapped_se:
     input:
         un=TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam",
     output:
-        r1=temp(TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz"),
+        r1=(TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz"),
     benchmark:
         BENCHDIR / "mainmap_get_unmapped_se_{sample}_{rn}.benchmark.txt"
     shell:
