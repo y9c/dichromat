@@ -212,7 +212,7 @@ rule internal_readme:
     params:
         basechange=config.get("base_change", "A,G"),
         prefix=str(INTERNALDIR / "ref/contamination/index"),
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "build_contamination_hisat3n_index.benchmark.txt"
     shell:
@@ -384,7 +384,7 @@ rule premap_align_pe:
             if config.get("secondary_change")
             else ""
         ),
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "premap_align_pe_{sample}_{rn}.benchmark.txt"
     shell:
@@ -419,7 +419,7 @@ rule premap_align_pe:
             if config.get("secondary_change")
             else ""
         ),
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "premap_align_se_{sample}_{rn}.benchmark.txt"
     shell:
@@ -467,7 +467,7 @@ rule finalize_premap_bam:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.contamination.bam",
-    threads: 32
+    threads: 64
     priority: 4
     benchmark:
         BENCHDIR / "finalize_premap_bam_{sample}_{rn}.benchmark.txt"
@@ -498,7 +498,7 @@ rule index_transcript:
         rf=INTERNALDIR / "ref/transcript.fa",
     output:
         idx=INTERNALDIR / "ref/transcript/index.indexed",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "index_transcript.benchmark.txt"
     shell:
@@ -512,7 +512,7 @@ rule index_genes:
         rf=INTERNALDIR / "ref/genes.fa",
     output:
         idx=INTERNALDIR / "ref/genes/index.indexed",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "index_genes.benchmark.txt"
     shell:
@@ -542,7 +542,7 @@ rule mainmap_align_pe:
         um=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam"),
         summary=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.summary"),
         mp1=[temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "mainmap_align_pe_{sample}_{rn}.benchmark.txt"
     shell:
@@ -567,7 +567,7 @@ rule mainmap_align_pe:
         um=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam"),
         summary=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.summary"),
         mp1=[temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "mainmap_align_se_{sample}_{rn}.benchmark.txt"
     shell:
@@ -597,7 +597,7 @@ rule mainmap_align_pe:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.genes.bam",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "finalize_mainmap_genes_bam_{sample}_{rn}.benchmark.txt"
     shell:
@@ -610,7 +610,7 @@ rule finalize_mainmap_transcript_bam:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.transcript.bam",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "finalize_mainmap_transcript_bam_{sample}_{rn}.benchmark.txt"
     shell:
@@ -667,7 +667,7 @@ rule remap_align_pe:
             if config.get("secondary_change")
             else ""
         ),
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "remap_align_pe_{sample}_{rn}.benchmark.txt"
     shell:
@@ -703,7 +703,7 @@ rule remap_align_se:
             if config.get("secondary_change")
             else ""
         ),
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "remap_align_se_{sample}_{rn}.benchmark.txt"
     shell:
@@ -731,7 +731,7 @@ rule remap_align_se:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.genome.bam",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "finalize_genome_bam_{sample}_{rn}.benchmark.txt"
     shell:
@@ -822,7 +822,7 @@ rule combine_bams:
     output:
         bam=temp(TEMPDIR / "combined/{sample}.{reftype}.bam"),
         bai=temp(TEMPDIR / "combined/{sample}.{reftype}.bam.bai"),
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "combine_bams_{sample}_{reftype}.benchmark.txt"
     shell:
@@ -851,7 +851,7 @@ rule drop_duplicates:
     output:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
         txt=INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "drop_duplicates_{sample}_{reftype}.benchmark.txt"
     shell:
@@ -1007,7 +1007,7 @@ rule run_countmut:
     params:
         ref_base=lambda wildcards: "C" if config.get("pileup_ct", False) else "A",
         mut_base=lambda wildcards: "T" if config.get("pileup_ct", False) else "G",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
     shell:
@@ -1017,7 +1017,7 @@ rule pileup_base:
         TEMPDIR / "pileup/{sample}.{reftype}.tsv",
     output:
         INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "pileup_base_{sample}_{reftype}.benchmark.txt"
     shell:
@@ -1088,7 +1088,7 @@ rule filter_eTAM_sites:
         "report_sites/sites.tsv.gz",
     output:
         fl="report_sites/filtered.tsv",
-    threads: 32
+    threads: 64
     benchmark:
         BENCHDIR / "filter_eTAM_sites.benchmark.txt"
     shell:
