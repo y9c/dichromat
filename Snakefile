@@ -156,6 +156,12 @@ rule all:
         "report_sites/sites.html",
         "report_sites/filtered.tsv" if IS_ETAM else "report_sites/sites.tsv.gz",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
+        [
+            INTERNALDIR / f"fastq/tooshort/{sample}_{rn}_{rd}.fq.gz"
+            for sample, v in SAMPLE2DATA.items()
+            for rn, v2 in v.items()
+            for rd in v2.keys()
+        ],
         INTERNALDIR / "README.md",
         INTERNALDIR / "stats/ratio/probe.tsv" if HAS_GENES else [],
     benchmark:
