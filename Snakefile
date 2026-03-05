@@ -619,6 +619,7 @@ rule finalize_mainmap_genes_bam:
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.genes.bam",
+    threads: 32
     benchmark:
         BENCHDIR / "finalize_mainmap_genes_bam_{sample}_{rn}.benchmark.txt"
     shell:
