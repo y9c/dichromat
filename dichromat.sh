@@ -104,6 +104,15 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo -e "\033[0;32m✓ Pipeline completed successfully\033[0m"
 else
     echo -e "\033[0;31m✗ Pipeline failed with exit code $EXIT_CODE\033[0m"
+    # Auto-unlock on failure to prevent manual intervention
+    echo -e "\033[1;33mAttempting automatic unlock...\033[0m"
+    "$SNAKEMAKE_BIN" \
+        --configfile "${PROJECT_DIR}/config.yaml" \
+        -s "${PROJECT_DIR}/Snakefile" \
+        --directory "${WORKSPACE_DIR}" \
+        --config batch="$BATCH" \
+        --unlock >> "${LOGFILE}" 2>&1
+    echo -e "\033[0;32m✓ Unlock command finished.\033[0m"
 fi
 
 exit $EXIT_CODE
