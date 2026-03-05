@@ -33,6 +33,6 @@ samples:
     libtype: TAKARAv2
   testCAM:
     data:
-      - R1: ~/scratch/debug_cmx/C-MR3_S17_L008_R2_001.fastq-002.gz
-        R2: ~/scratch/debug_cmx/C-MR3_S17_L008_R1_001.fastq-004.gz
+      - R1: ~/scratch/debug_cmx/C-MR3_S17_L008_R1_001.fastq-004.gz
+        R2: ~/scratch/debug_cmx/C-MR3_S17_L008_R2_001.fastq-002.gz
     libtype: eCLIP10
