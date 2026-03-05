@@ -4,7 +4,7 @@ skip_samples:
   - "sample1-FTO"
   - "sample1-IVT"
 
-adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
+# adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
 
 base_change: 'A,G'
 secondary_change: 'C,T'
@@ -23,14 +23,16 @@ reference:
     hisat3n: ~/reference/genome/Homo_sapiens/hisat2_tx_3n/GRCh38.release110
 
 samples:
-  sample1:
+  # sample1:
+  #   data:
+  #     - R1: ~/scratch/debug.fq.gz
+  testGLORI:
     data:
-      - R1: ~/scratch/debug.fq.gz
-
-path:
-  hisat3n: "hisat3n"
-  samtools: "samtools"
-  cutseq: "cutseq"
-  markdup: "markdup"
-  multiqc: "multiqc"
-  python: "python"
+      - R1: ~/scratch/debug_cmx/G-MP2_S4_L007_R1_001.fastq-001.gz
+        R2: ~/scratch/debug_cmx/G-MP2_S4_L007_R2_001.fastq-003.gz
+    libtype: TAKARAv2
+  testCAM:
+    data:
+      - R1: ~/scratch/debug_cmx/C-MR3_S17_L008_R2_001.fastq-002.gz
+        R2: ~/scratch/debug_cmx/C-MR3_S17_L008_R1_001.fastq-004.gz
+    libtype: eCLIP10
