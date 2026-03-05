@@ -289,6 +289,7 @@ rule trim_se:
         s=temp(TEMPDIR / "trim/SE/{sample}_{rn}_tooshort_R1.fq.gz"),
         report=temp(TEMPDIR / "trim/SE/{sample}_{rn}.json"),
     params:
+        in_fq=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1"),
         minlen=config.get("min_len", 20),
         cut=lambda wildcards: (
             f"-A '{SAMPLE2LIB[wildcards.sample]}'"
@@ -315,6 +316,8 @@ rule trim_pe:
         s2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R2.fq.gz"),
         report=temp(TEMPDIR / "trim/PE/{sample}_{rn}.json"),
     params:
+        in_r1=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1"),
+        in_r2=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R2"),
         minlen=config.get("min_len", 20),
         cut=lambda wildcards: (
             f"-A '{SAMPLE2LIB[wildcards.sample]}'"
@@ -607,7 +610,7 @@ rule mainmap_align_pe:
         um=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam"),
         summary=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.summary"),
         mp1=[temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
-    threads: 64
+    threads: 128
     benchmark:
         BENCHDIR / "mainmap_align_pe_{sample}_{rn}.benchmark.txt"
     shell:
