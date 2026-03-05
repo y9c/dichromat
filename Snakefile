@@ -177,9 +177,11 @@ rule internal_readme:
                 "This directory contains intermediate files for the `dichromat` pipeline.\n\n"
             )
             f.write("## Data Flow & Directory Structure\n\n")
-            f.write("### 1. `qc/` & `fastq/unmapped/`\n")
+            f.write("### 1. `qc/` & `fastq/`\n")
             f.write("- `qc/trimming/`: Trimming reports from `cutseq`.\n")
-            f.write("- `qc/fastqc/`: FastQC reports for trimmed reads.\n")
+            f.write("- `qc/fastqc_trimmed/`: FastQC reports for trimmed reads.\n")
+            f.write("- `qc/fastqc_unmapped/`: FastQC reports for unmapped reads.\n")
+            f.write("- `fastq/tooshort/`: Reads that were too short after trimming.\n")
             f.write(
                 "- `fastq/unmapped/`: Reads that failed to map to any reference.\n\n"
             )
@@ -355,7 +357,7 @@ rule finalize_discarded_reads:
             / f"trim/SE/{wildcards.sample}_{wildcards.rn}_tooshort_{wildcards.rd}.fq.gz"
         ),
     output:
-        INTERNALDIR / "qc/{sample}_{rn}_tooshort_{rd}.fq.gz",
+        INTERNALDIR / "fastq/tooshort/{sample}_{rn}_{rd}.fq.gz",
     benchmark:
         BENCHDIR / "finalize_discarded_reads_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
@@ -372,12 +374,12 @@ rule qc_trimmed:
             / f"trim/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}.fq.gz"
         ),
     output:
-        html=INTERNALDIR / "qc/fastqc/{sample}_{rn}_{rd}/fastqc_report.html",
-        text=INTERNALDIR / "qc/fastqc/{sample}_{rn}_{rd}/fastqc_data.txt",
-        summary=INTERNALDIR / "qc/fastqc/{sample}_{rn}_{rd}/summary.txt",
+        html=INTERNALDIR / "qc/fastqc_trimmed/{sample}_{rn}_{rd}/fastqc_report.html",
+        text=INTERNALDIR / "qc/fastqc_trimmed/{sample}_{rn}_{rd}/fastqc_data.txt",
+        summary=INTERNALDIR / "qc/fastqc_trimmed/{sample}_{rn}_{rd}/summary.txt",
     params:
         lambda wildcards: INTERNALDIR
-        / f"qc/fastqc/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
+        / f"qc/fastqc_trimmed/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
     benchmark:
         BENCHDIR / "qc_trimmed_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
@@ -387,7 +389,7 @@ rule qc_trimmed:
 rule report_qc_trimmed:
     input:
         [
-            INTERNALDIR / f"qc/fastqc/{sample}_{rn}_{rd}/fastqc_data.txt"
+            INTERNALDIR / f"qc/fastqc_trimmed/{sample}_{rn}_{rd}/fastqc_data.txt"
             for sample, v in SAMPLE2DATA.items()
             for rn, v2 in v.items()
             for rd in v2.keys()
