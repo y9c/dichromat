@@ -38,7 +38,7 @@ def parse_read(read, strand_type):
             strand = "-" if read.is_reverse else "+"
 
         # library type forward strand (Swift kit, if not, need to change this code)
-        # changed into revser strand
+        # changed into reverse strand
         if strand_type == -1:
             strand = "-" if strand == "+" else "+"
     else:

@@ -98,7 +98,7 @@ if __name__ == "__main__":
                 res.append(f"{unc/(con + unc):.3%}")
             else:
                 res.append("NA")
-            # A -> A and A -> G
+            # Background A -> A and A -> G
             unc = b[("A", "A")]
             con = b[("A", "G")]
             if con + unc > 0:
