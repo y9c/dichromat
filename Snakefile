@@ -205,8 +205,8 @@ rule internal_readme:
             f.write("- `stats/count/`: Read count throughput tables.\n")
             f.write("- `stats/dedup/`: Detailed logs from `markdup` deduplication.\n")
             f.write("- `stats/ratio/by_motif/`: Global conversion ratios grouped by 3-mer motifs.\n")
-            f.write("- `stats/multiqc/`: Summaries for the Mapping report.\n")
-            f.write("- `stats/multiqc_sites/`: Summaries for the Site report.\n\n")
+            f.write("- `stats/mqc/reads/`: Summaries for the Mapping report.\n")
+            f.write("- `stats/mqc/sites/`: Summaries for the Site report.\n\n")
             f.write("### 5. `pileup/`\n")
             f.write(
                 "- `pileup/per_sample/`: Site-level data (tsv.gz) for each sample.\n"
@@ -1306,11 +1306,11 @@ rule aggregate_multiqc_stats:
         ),
         sites_file="report_sites/sites.tsv.gz" if IS_ETAM else [],
     output:
-        mapping=INTERNALDIR / "stats/multiqc/mapping_stats_mqc.tsv",
-        motifs=INTERNALDIR / "stats/multiqc_sites/motif_conversion_mqc.tsv",
-        site_sum=INTERNALDIR / "stats/multiqc_sites/site_summary_mqc.tsv",
-        site_dist=INTERNALDIR / "stats/multiqc_sites/site_distribution_mqc.tsv",
-        dedup=INTERNALDIR / "stats/multiqc/dedup_stats_mqc.tsv",
+        mapping=INTERNALDIR / "stats/mqc/reads/mapping_stats_mqc.tsv",
+        motifs=INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
+        site_sum=INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
+        site_dist=INTERNALDIR / "stats/mqc/sites/site_distribution_mqc.tsv",
+        dedup=INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
     benchmark:
         BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
     threads: 8
@@ -1323,14 +1323,14 @@ rule aggregate_multiqc_stats:
 
 rule generate_mapping_report:
     input:
-        INTERNALDIR / "stats/multiqc/mapping_stats_mqc.tsv",
-        INTERNALDIR / "stats/multiqc/dedup_stats_mqc.tsv",
+        INTERNALDIR / "stats/mqc/reads/mapping_stats_mqc.tsv",
+        INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
     output:
         "report_reads/mapping.html",
     params:
         report_name="mapping.html",
         report_dir=str(Path("report_reads")),
-        search_dir=str(INTERNALDIR / "stats/multiqc"),
+        search_dir=str(INTERNALDIR / "stats/mqc/reads"),
     benchmark:
         BENCHDIR / "generate_mapping_report.benchmark.txt"
     shell:
@@ -1339,15 +1339,15 @@ rule generate_mapping_report:
 
 rule generate_site_report:
     input:
-        INTERNALDIR / "stats/multiqc_sites/motif_conversion_mqc.tsv",
-        INTERNALDIR / "stats/multiqc_sites/site_summary_mqc.tsv",
-        INTERNALDIR / "stats/multiqc_sites/site_distribution_mqc.tsv",
+        INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
+        INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
+        INTERNALDIR / "stats/mqc/sites/site_distribution_mqc.tsv",
     output:
         "report_sites/sites.html",
     params:
         report_name="sites.html",
         report_dir=str(Path("report_sites")),
-        search_dir=str(INTERNALDIR / "stats/multiqc_sites"),
+        search_dir=str(INTERNALDIR / "stats/mqc/sites"),
     benchmark:
         BENCHDIR / "generate_site_report.benchmark.txt"
     shell:
