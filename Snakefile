@@ -1303,6 +1303,7 @@ rule aggregate_multiqc_stats:
         dedup=INTERNALDIR / "stats/multiqc/dedup_stats_mqc.tsv",
     benchmark:
         BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
+    threads: 8
     shell:
         """
         {PATH.mqc_mapping} {output.mapping} {output.dedup} {input.counts} --dedup-logs {input.dedup_logs} --trim-jsons {input.trim_jsons}

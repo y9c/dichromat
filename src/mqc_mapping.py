@@ -67,7 +67,7 @@ def main():
     if dfs:
         df_final = dfs[0]
         for df in dfs[1:]:
-            df_final = df_final.join(df, on='Metric', how='outer_coalesced')
+            df_final = df_final.join(df, on='Metric', how='full', coalesce=True)
         
         desired_order = [
             "Raw", "Clean", 

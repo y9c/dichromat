@@ -95,7 +95,7 @@ echo "Running pipeline... (output logged to: ${LOGFILE})"
     --config batch="$BATCH" \
     -j 100 \
     --use-singularity \
-    --singularity-args "-B /data" \
+    --singularity-args "-B /data -B ${PROJECT_DIR}/src:/pipeline/src" \
     "${EXTRA_ARGS[@]}" >> "${LOGFILE}" 2>&1
 
 EXIT_CODE=$?
