@@ -9,8 +9,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("heatmap_output")
     parser.add_argument("summary_output")
-    parser.add_argument("dist_output_dir") 
-    parser.add_argument("depth_output_dir")
+    parser.add_argument("dist_output")
+    parser.add_argument("depth_output")
     parser.add_argument("transcript_table_output")
     parser.add_argument("genome_table_output")
     parser.add_argument("--motif-files", nargs="+")
@@ -19,10 +19,6 @@ def main():
     
     args = parser.parse_args()
     target_base = args.target_base.upper()
-
-    # Create directories for line plots
-    os.makedirs(args.dist_output_dir, exist_ok=True)
-    os.makedirs(args.depth_output_dir, exist_ok=True)
 
     # 1. Motif Ratio Tables
     transcript_dfs = []
@@ -58,11 +54,9 @@ def main():
     # 2. Motif Heatmap & Distributions (from merged sites file)
     if args.sites_file and os.path.exists(args.sites_file):
         try:
-            print(f"Processing sites file: {args.sites_file}")
             df_sites = pl.read_csv(args.sites_file, separator='\t', infer_schema_length=None)
             depth_cols = [c for c in df_sites.columns if c.startswith("Depth_")]
             
-            # --- Heatmap ---
             heatmap_data = []
             for d_col in depth_cols:
                 sample = d_col.replace("Depth_", "")
@@ -91,18 +85,21 @@ def main():
                     f_out.write("\n".join(header_hm) + "\n")
                     df_hm.write_csv(f_out, separator='\t', include_header=True, float_precision=4)
 
-            # --- Distributions ---
+            # Distributions
             summary_data = []
             ratio_bins = np.linspace(0, 1, 51)
-            ratio_mids = [(ratio_bins[i] + ratio_bins[i+1])/2 for i in range(len(ratio_bins)-1)]
+            ratio_labels = [f"{(ratio_bins[i] + ratio_bins[i+1])/2 :.2f}" for i in range(len(ratio_bins)-1)]
             
             max_depth = 1000
             for d_col in depth_cols:
                 col_max = df_sites.select(pl.col(d_col).cast(pl.Int64)).max().item()
                 if col_max and col_max > max_depth: max_depth = col_max
             depth_bins = np.logspace(0, np.log10(max_depth + 1), 51)
-            depth_mids = [(depth_bins[i] + depth_bins[i+1])/2 for i in range(len(depth_bins)-1)]
+            depth_labels = [f"{int((depth_bins[i] + depth_bins[i+1])/2)}" for i in range(len(depth_bins)-1)]
             
+            ratio_rows = []
+            depth_rows = []
+
             for d_col in depth_cols:
                 sample = d_col.replace("Depth_", "")
                 u_col = f"Uncon_{sample}"
@@ -115,40 +112,11 @@ def main():
                 
                 summary_data.append({'Sample': sample, 'Total_Sites': len(valid_df), 'Mean_Depth': float(depths.mean()), 'Median_Depth': float(np.median(depths)), 'Mean_Ratio': float(ratios.mean()), 'Max_Ratio': float(ratios.max())})
                 
-                # Write individual ratio file for this sample inside directory
                 r_counts, _ = np.histogram(ratios, bins=ratio_bins)
-                header_ratio = [
-                    "# id: site_ratio_dist", 
-                    "# section_name: 'Site Conversion Ratio Distribution'", 
-                    "# plot_type: 'line'", 
-                    "# pconfig:",
-                    "#    title: 'Site Conversion Ratios'",
-                    "#    xlab: 'Conversion Ratio'",
-                    "#    ylab: 'Number of Sites'",
-                    "#    smooth_points: false"
-                ]
-                with open(os.path.join(args.dist_output_dir, f"{sample}.tsv"), 'w') as f_out:
-                    f_out.write("\n".join(header_ratio) + "\n")
-                    f_out.write(f"Ratio\t{sample}\n")
-                    for x, y in zip(ratio_mids, r_counts): f_out.write(f"{x:.2f}\t{y}\n")
+                ratio_rows.append({'Sample': sample, **{l: int(c) for l, c in zip(ratio_labels, r_counts)}})
 
-                # Write individual depth file for this sample inside directory
                 d_counts, _ = np.histogram(depths, bins=depth_bins)
-                header_depth = [
-                    "# id: site_depth_dist", 
-                    "# section_name: 'Site Depth Distribution'", 
-                    "# plot_type: 'line'", 
-                    "# pconfig:",
-                    "#    title: 'Site Coverage Depth'",
-                    "#    xlab: 'Depth (Reads)'",
-                    "#    ylab: 'Number of Sites'",
-                    "#    xlog: true",
-                    "#    smooth_points: false"
-                ]
-                with open(os.path.join(args.depth_output_dir, f"{sample}.tsv"), 'w') as f_out:
-                    f_out.write("\n".join(header_depth) + "\n")
-                    f_out.write(f"Depth\t{sample}\n")
-                    for x, y in zip(depth_mids, d_counts): f_out.write(f"{int(x)}\t{y}\n")
+                depth_rows.append({'Sample': sample, **{l: int(c) for l, c in zip(depth_labels, d_counts)}})
             
             if summary_data:
                 df_summary = pl.DataFrame(summary_data)
@@ -156,6 +124,30 @@ def main():
                 with open(args.summary_output, 'w') as f_out:
                     f_out.write("\n".join(header_sum) + "\n")
                     df_summary.write_csv(f_out, separator='\t', include_header=True)
+
+            if ratio_rows:
+                df_ratio = pl.DataFrame(ratio_rows)
+                header_ratio = [
+                    "# id: site_ratio_dist", 
+                    "# section_name: 'Site Conversion Ratio Distribution'", 
+                    "# plot_type: 'line'", 
+                    "# pconfig: {title: 'Site Conversion Ratios', xlab: 'Conversion Ratio', ylab: 'Number of Sites'}"
+                ]
+                with open(args.dist_output, 'w') as f_out:
+                    f_out.write("\n".join(header_ratio) + "\n")
+                    df_ratio.write_csv(f_out, separator='\t', include_header=True)
+
+            if depth_rows:
+                df_depth = pl.DataFrame(depth_rows)
+                header_depth = [
+                    "# id: site_depth_dist", 
+                    "# section_name: 'Site Depth Distribution'", 
+                    "# plot_type: 'line'", 
+                    "# pconfig: {title: 'Site Coverage Depth', xlab: 'Depth (Reads)', ylab: 'Number of Sites', xlog: true}"
+                ]
+                with open(args.depth_output, 'w') as f_out:
+                    f_out.write("\n".join(header_depth) + "\n")
+                    df_depth.write_csv(f_out, separator='\t', include_header=True)
                     
         except Exception as e:
             print(f"Error: {e}")
