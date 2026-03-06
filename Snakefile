@@ -1310,6 +1310,7 @@ rule aggregate_multiqc_stats:
         motifs=INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
         site_sum=INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
         site_dist=INTERNALDIR / "stats/mqc/sites/site_distribution_mqc.tsv",
+        site_depth=INTERNALDIR / "stats/mqc/sites/site_depth_mqc.tsv",
         dedup=INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
     benchmark:
         BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
@@ -1317,7 +1318,7 @@ rule aggregate_multiqc_stats:
     shell:
         """
         {PATH.mqc_mapping} {output.mapping} {output.dedup} {input.counts} --dedup-logs {input.dedup_logs} --trim-jsons {input.trim_jsons}
-        {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} --motif-files {input.motifs} --sites-file {input.sites_file}
+        {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} {output.site_depth} --motif-files {input.motifs} --sites-file {input.sites_file}
         """
 
 
@@ -1342,6 +1343,7 @@ rule generate_site_report:
         INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
         INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
         INTERNALDIR / "stats/mqc/sites/site_distribution_mqc.tsv",
+        INTERNALDIR / "stats/mqc/sites/site_depth_mqc.tsv",
     output:
         "report_sites/sites.html",
     params:
