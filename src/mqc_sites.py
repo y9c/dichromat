@@ -19,12 +19,13 @@ def main():
     all_dfs = []
     if args.motif_files:
         for f in args.motif_files:
-            sample = os.path.basename(f).split('.')[0]
+            # Use filename without extension as the identifier (e.g., sample.transcript)
+            name = os.path.basename(f).replace('.tsv', '')
             try:
                 df = pl.read_csv(f, separator='\t')
                 df = df.with_columns(
                     pl.col('Motif').str.to_uppercase().str.replace_all('T', 'U'),
-                    pl.lit(sample).alias('Sample')
+                    pl.lit(name).alias('Sample')
                 )
                 all_dfs.append(df)
             except: pass

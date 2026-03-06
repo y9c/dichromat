@@ -204,6 +204,7 @@ rule internal_readme:
             f.write("### 4. `stats/`\n")
             f.write("- `stats/count/`: Read count throughput tables.\n")
             f.write("- `stats/dedup/`: Detailed logs from `markdup` deduplication.\n")
+            f.write("- `stats/ratio/by_motif/`: Global conversion ratios grouped by 3-mer motifs.\n")
             f.write("- `stats/multiqc/`: Summaries for the Mapping report.\n")
             f.write("- `stats/multiqc_sites/`: Summaries for the Site report.\n\n")
             f.write("### 5. `pileup/`\n")
@@ -1197,11 +1198,19 @@ rule motif_conversion_rate_stat:
     input:
         pileup=INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
     output:
-        INTERNALDIR / "stats/{sample}.{reftype}.motif.tsv",
+        INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
+    params:
+        target_base=config.get("base_change", "A,G").split(",")[0].upper(),
     benchmark:
         BENCHDIR / "motif_conversion_rate_stat_{sample}_{reftype}.benchmark.txt"
     shell:
-        'zcat {input.pileup} | awk -F \'\\t\' \'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio"}} NR>1 && ($6+$9+$7+$10+0)>0{{m=toupper(substr($4,15,3)); if(m ~ /^[ATGC]+$/){{n[m]+=1;u[m]+=$6+$7;d[m]+=$6+$9+$7+$10;r[m]+=($6+$7)/($6+$9+$7+$10)}}}} END{{for(m in d) print m,n[m],u[m],d[m],r[m]/n[m]}}\' > {output}'
+        "zcat {input.pileup} | awk -F '\\t' -v target=\"{params.target_base}\" "
+        "'BEGIN{{OFS=\"\\t\";print \"Motif\",\"Count\",\"Unconverted\",\"Depth\",\"Ratio\"}} "
+        "NR>1 && ($6+$9+$7+$10+0)>0{{ "
+        "m=toupper(substr($4,15,3)); "
+        "if(m ~ \"^[ATGC]+$\" && substr(m,2,1) == target){{ "
+        "n[m]+=1;u[m]+=$6+$7;d[m]+=$6+$9+$7+$10;r[m]+=($6+$7)/($6+$9+$7+$10)"
+        "}}}} END{{for(m in d) print m,n[m],u[m],d[m],r[m]/n[m]}}' > {output}"
 
 
 rule join_pileup_table:
@@ -1281,8 +1290,9 @@ rule aggregate_multiqc_stats:
             INTERNALDIR / "stats/count/{sample}.tsv", sample=SAMPLE2DATA.keys()
         ),
         motifs=expand(
-            INTERNALDIR / "stats/{sample}.transcript.motif.tsv",
+            INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
             sample=SAMPLE2DATA.keys(),
+            reftype=["transcript", "genome"],
         ),
         dedup_logs=expand(
             INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",

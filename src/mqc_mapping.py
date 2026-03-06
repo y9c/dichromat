@@ -56,65 +56,73 @@ def main():
     args = parser.parse_args()
 
     # 1. Pipeline Mapping Statistics
-    dfs = []
+    results = []
     for f in args.count_files:
         sample = os.path.basename(f).replace('.tsv', '')
         try:
-            df = pl.read_csv(f, separator='\t', has_header=False, new_columns=['Metric', sample])
-            dfs.append(df)
-        except: pass
+            # Read counts into a dict
+            counts = {}
+            with open(f, 'r') as fh:
+                for line in fh:
+                    k, v = line.strip().split('\t')
+                    counts[k] = int(v)
+            
+            raw = counts.get('Raw', 0)
+            clean = counts.get('Clean', 0)
+            contam = counts.get('Contamination_Passed', 0)
+            masking = counts.get('Masking_Passed', 0)
+            target_passed = counts.get('Transcript_Passed', 0) + counts.get('Genome_Passed', 0)
+            target_unique = counts.get('Transcript_Dedup', 0) + counts.get('Genome_Dedup', 0)
 
-    if dfs:
-        df_final = dfs[0]
-        for df in dfs[1:]:
-            df_final = df_final.join(df, on='Metric', how='full', coalesce=True)
-        
-        desired_order = [
-            "Raw", "Clean", 
-            "Contamination_Passed", "Contamination_Dedup",
-            "Masking_Passed", "Masking_Dedup",
-            "Transcript_Passed", "Transcript_Dedup",
-            "Genome_Passed", "Genome_Dedup"
-        ]
-        existing_metrics = [m for m in desired_order if m in df_final['Metric'].to_list()]
-        others = [m for m in df_final['Metric'].to_list() if m not in desired_order]
-        final_metrics = existing_metrics + others
-        
-        df_final = pl.DataFrame({"Metric": final_metrics}).join(df_final, on="Metric", how="left")
-        df_mapping = df_final.drop('Metric').transpose(column_names=final_metrics)
-        samples = [os.path.basename(f).replace('.tsv', '') for f in args.count_files]
-        df_mapping = df_mapping.insert_column(0, pl.Series("Sample", samples))
+            # Calculation of Delta Segments (Hierarchy)
+            unique_m = target_unique
+            duplicates_m = max(0, target_passed - target_unique)
+            masking_m = masking
+            contam_m = contam
+            unmapped_m = max(0, clean - (contam + masking + target_passed))
+            discarded_m = max(0, raw - clean)
 
+            res = {
+                "Sample": sample,
+                "Unique Mapped (Target)": unique_m,
+                "Duplicates": duplicates_m,
+                "Masking": masking_m,
+                "Contamination": contam_m,
+                "Unmapped": unmapped_m,
+                "Discarded (Short)": discarded_m,
+                "Total_Raw": raw
+            }
+            results.append(res)
+        except Exception as e:
+            print(f"Error processing {f}: {e}")
+
+    if results:
+        df_mapping = pl.DataFrame(results).sort("Sample")
+        
         if args.trim_jsons:
             df_trim = pl.DataFrame([parse_trim_json(f) for f in args.trim_jsons])
             df_mapping = df_mapping.join(df_trim, on="Sample", how="left")
 
+        # MultiQC Header with specific colors from the user snippet
         header_mapping = [
             "# id: mapping_stats_table",
             "# section_name: 'Pipeline Mapping Statistics'",
-            "# description: 'Read counts at each stage. Note: These are nested metrics (Clean < Raw, Passed < Clean, Dedup < Passed).'",
-            "# plot_type: 'table'",
-            "# pconfig:",
-            "#    namespace: 'Mapping'",
-            "#    format: '{:,.0f}'",
-            "#    col_config:",
-        ]
-        for m in final_metrics:
-            header_mapping.append(f"#        {m}: {{ 'plot_type': 'bar', 'min': 0 }}")
-        header_mapping.append("#        Trimmed_Pct: {suffix: '%', scale: 'Purples', format: '{:.1f}'}")
-
-        # Enhanced plot config
-        header_mapping.extend([
-            "# id: mapping_throughput_graph",
-            "# section_name: 'Mapping Throughput Graph'",
-            "# description: 'Read retention across pipeline stages. Grouped bars show the counts at each step.'",
+            "# description: 'Read counts at each stage. Bars are stacked to show the full hierarchy of read retention.'",
             "# plot_type: 'bargraph'",
             "# pconfig:",
-            "#    id: 'mapping_throughput_bargraph'",
-            "#    title: 'Mapping Throughput'",
+            "#    id: 'mapping_hierarchy_bargraph'",
+            "#    title: 'Sequencing Read Alignment Hierarchy'",
             "#    ylab: 'Number of Reads'",
-            "#    stacking: false", # MultiQC uses false or null for side-by-side
-        ])
+            "#    stacking: 'normal'",
+            "#    cpswitch: false",
+            "#    colors:",
+            "#        'Unique Mapped (Target)': '#1b5e20'",
+            "#        'Duplicates': '#4caf50'",
+            "#        'Masking': '#7b1fa2'",
+            "#        'Contamination': '#9c27b0'",
+            "#        'Unmapped': '#81d4fa'",
+            "#        'Discarded (Short)': '#ff8a65'",
+        ]
 
         with open(args.mapping_output, 'w') as f_out:
             f_out.write("\n".join(header_mapping) + "\n")
