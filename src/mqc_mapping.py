@@ -75,6 +75,7 @@ def main():
             target_unique = counts.get('Transcript_Dedup', 0) + counts.get('Genome_Dedup', 0)
 
             # Calculation of Delta Segments (Hierarchy)
+            # These segments sum up to Total Raw
             unique_m = target_unique
             duplicates_m = max(0, target_passed - target_unique)
             masking_m = masking
@@ -89,8 +90,7 @@ def main():
                 "Masking": masking_m,
                 "Contamination": contam_m,
                 "Unmapped": unmapped_m,
-                "Discarded (Short)": discarded_m,
-                "Total_Raw": raw
+                "Discarded (Short)": discarded_m
             }
             results.append(res)
         except Exception as e:
@@ -103,7 +103,7 @@ def main():
             df_trim = pl.DataFrame([parse_trim_json(f) for f in args.trim_jsons])
             df_mapping = df_mapping.join(df_trim, on="Sample", how="left")
 
-        # MultiQC Header with specific colors from the user snippet
+        # MultiQC Header with specific colors and explicit segment definitions
         header_mapping = [
             "# id: mapping_stats_table",
             "# section_name: 'Pipeline Mapping Statistics'",
