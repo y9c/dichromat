@@ -33,12 +33,28 @@ def main():
     if all_dfs:
         df_concat = pl.concat(all_dfs)
         df_pivot = df_concat.pivot(on='Sample', index='Motif', values='Ratio').sort("Motif")
+        
+        # Calculate dynamic max for the heatmap scale
+        # We look at all columns except 'Motif'
+        numeric_cols = [c for c in df_pivot.columns if c != "Motif"]
+        max_val = 0
+        if numeric_cols:
+            max_val = df_pivot.select(numeric_cols).max().max_horizontal().to_list()[0]
+        
+        # Ensure we have a reasonable max if data is empty or all zero
+        if max_val is None or max_val == 0:
+            max_val = 1.0
+        
+        # Use colstops instead of stops, and dynamic max
+        # Halfway point for color scaling
+        mid_val = max_val / 2.0
+        
         header = [
             "# id: motif_conversion_heatmap",
             "# section_name: 'Motif Conversion Ratios'",
             "# description: 'Global conversion ratio (Unconverted / Depth) for all 3-mer motifs.'",
             "# plot_type: 'heatmap'",
-            "# pconfig: {title: 'Motif Ratios', x_title: 'Sample', y_title: 'Motif', min: 0, max: 1, stops: [[0, '#f7fcf0'], [0.5, '#7bccc4'], [1, '#084081']]}",
+            f"# pconfig: {{title: 'Motif Ratios', min: 0, max: {max_val}, colstops: [[0, '#f7fcf0'], [{mid_val}, '#7bccc4'], [{max_val}, '#084081']]}}",
         ]
         with open(args.motif_output, 'w') as f_out:
             f_out.write("\n".join(header) + "\n")
