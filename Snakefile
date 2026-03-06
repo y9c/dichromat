@@ -296,7 +296,7 @@ rule trim_se:
     output:
         c=temp(TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz"),
         s=temp(TEMPDIR / "trim/SE/{sample}_{rn}_tooshort_R1.fq.gz"),
-        report=temp(TEMPDIR / "trim/SE/{sample}_{rn}.json"),
+        report=temp(TEMPDIR / "trim/SE/{sample}_{rn}_mqc.tsv"),
     params:
         minlen=config.get("min_len", 20),
         cut=lambda wildcards: (
@@ -322,7 +322,7 @@ rule trim_pe:
         c2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz"),
         s1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R1.fq.gz"),
         s2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R2.fq.gz"),
-        report=temp(TEMPDIR / "trim/PE/{sample}_{rn}.json"),
+        report=temp(TEMPDIR / "trim/PE/{sample}_{rn}_mqc.tsv"),
     params:
         minlen=config.get("min_len", 20),
         cut=lambda wildcards: (
@@ -342,12 +342,12 @@ rule trim_pe:
 rule finalize_trim_report:
     input:
         lambda wildcards: (
-            TEMPDIR / f"trim/PE/{wildcards.sample}_{wildcards.rn}.json"
+            TEMPDIR / f"trim/PE/{wildcards.sample}_{wildcards.rn}_mqc.tsv"
             if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR / f"trim/SE/{wildcards.sample}_{wildcards.rn}.json"
+            else TEMPDIR / f"trim/SE/{wildcards.sample}_{wildcards.rn}_mqc.tsv"
         ),
     output:
-        INTERNALDIR / "qc/trimming/{sample}_{rn}.json",
+        INTERNALDIR / "qc/trimming/{sample}_{rn}_mqc.tsv",
     benchmark:
         BENCHDIR / "finalize_trim_report_{sample}_{rn}.benchmark.txt"
     shell:
@@ -748,7 +748,7 @@ rule remap_align_pe:
     output:
         bam=temp(TEMPDIR / "remap/PE/{sample}_{rn}.mapped.bam"),
         summary=temp(TEMPDIR / "remap/PE/{sample}_{rn}.summary"),
-        report=temp(TEMPDIR / "remap/PE/{sample}_{rn}.report.json"),
+        report=temp(TEMPDIR / "remap/PE/{sample}_{rn}.report_mqc.tsv"),
         unmapped=temp(TEMPDIR / "remap/PE/{sample}_{rn}.final_unmap.bam"),
     params:
         index=REF["genome"]["hisat3n"],
@@ -786,7 +786,7 @@ rule remap_align_se:
     output:
         bam=temp(TEMPDIR / "remap/SE/{sample}_{rn}.mapped.bam"),
         summary=temp(TEMPDIR / "remap/SE/{sample}_{rn}.summary"),
-        report=temp(TEMPDIR / "remap/SE/{sample}_{rn}.report.json"),
+        report=temp(TEMPDIR / "remap/SE/{sample}_{rn}.report_mqc.tsv"),
         unmapped=temp(TEMPDIR / "remap/SE/{sample}_{rn}.final_unmap.bam"),
     params:
         index=REF["genome"]["hisat3n"],
@@ -852,10 +852,10 @@ rule finalize_genome_report:
     input:
         lambda wildcards: (
             TEMPDIR
-            / f"remap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.report.json"
+            / f"remap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.report_mqc.tsv"
         ),
     output:
-        INTERNALDIR / "stats/filter/{sample}_{rn}.genome.json",
+        INTERNALDIR / "stats/filter/{sample}_{rn}.genome_mqc.tsv",
     benchmark:
         BENCHDIR / "finalize_genome_report_{sample}_{rn}.benchmark.txt"
     shell:
@@ -1036,7 +1036,7 @@ rule liftover_transcript_to_genome:
 rule count_reads:
     input:
         report=lambda wildcards: [
-            INTERNALDIR / f"qc/trimming/{wildcards.sample}_{r}.json"
+            INTERNALDIR / f"qc/trimming/{wildcards.sample}_{r}_mqc.tsv"
             for r in SAMPLE2DATA[wildcards.sample].keys()
         ],
         count1=(
@@ -1300,7 +1300,7 @@ rule aggregate_multiqc_stats:
             reftype=["genome", "transcript", "genes", "contamination"],
         ),
         trim_jsons=expand(
-            INTERNALDIR / "qc/trimming/{sample}_{rn}.json",
+            INTERNALDIR / "qc/trimming/{sample}_{rn}_mqc.tsv",
             sample=SAMPLE2DATA.keys(),
             rn=["run1"],
         ),
