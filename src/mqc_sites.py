@@ -7,70 +7,144 @@ import numpy as np
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("motif_output")
+    parser.add_argument("heatmap_output")
     parser.add_argument("summary_output")
     parser.add_argument("dist_output")
     parser.add_argument("depth_output")
+    parser.add_argument("transcript_table_output")
+    parser.add_argument("genome_table_output")
     parser.add_argument("--motif-files", nargs="+")
     parser.add_argument("--sites-file")
+    parser.add_argument("--target-base", default="A")
     
     args = parser.parse_args()
+    target_base = args.target_base.upper()
 
-    # 1. Motif Heatmap (High precision %, dynamic scale)
-    all_dfs = []
+    # 1. Motif Ratio Tables (from individual .tsv files)
+    transcript_dfs = []
+    genome_dfs = []
+    
     if args.motif_files:
         for f in args.motif_files:
-            name = os.path.basename(f).replace('.tsv', '')
+            name_parts = os.path.basename(f).replace('.tsv', '').split('.')
+            sample = name_parts[0]
+            reftype = name_parts[1] if len(name_parts) > 1 else "unknown"
+            
             try:
                 df = pl.read_csv(f, separator='\t')
-                df = df.with_columns(
+                # Ratio is already calculated in these files
+                df = df.select([
                     pl.col('Motif').str.to_uppercase().str.replace_all('T', 'U'),
-                    (pl.col('Ratio') * 100).alias('Ratio_Pct'),
-                    pl.lit(name).alias('Sample')
-                )
-                all_dfs.append(df)
-            except: pass
+                    pl.col('Ratio').alias(sample)
+                ])
+                if reftype == "transcript":
+                    transcript_dfs.append(df)
+                elif reftype == "genome":
+                    genome_dfs.append(df)
+            except Exception as e:
+                print(f"Warning: Could not process motif file {f}: {e}")
 
-    if all_dfs:
-        df_concat = pl.concat(all_dfs)
-        df_pivot = df_concat.pivot(on='Sample', index='Motif', values='Ratio_Pct').sort("Motif")
-        
-        numeric_cols = [c for c in df_pivot.columns if c != "Motif"]
-        max_val = 0
-        if numeric_cols:
-            max_val = df_pivot.select(numeric_cols).max().max_horizontal().item()
-        
-        if max_val is None or max_val == 0:
-            max_val = 100.0
-        
-        mid_val = max_val / 2.0
+    def write_motif_table(dfs, output_path, title, section_id):
+        if not dfs: return
+        # Join all samples on Motif
+        df_final = dfs[0]
+        for df in dfs[1:]:
+            df_final = df_final.join(df, on='Motif', how='full', coalesce=True)
+        df_final = df_final.sort("Motif")
         
         header = [
-            "# id: motif_conversion_heatmap",
-            "# section_name: 'Motif Conversion Ratios'",
-            "# description: 'Global conversion ratio (Unconverted / Depth) for all 3-mer motifs, shown in %.'",
-            "# plot_type: 'heatmap'",
-            f"# pconfig: {{title: 'Motif Ratios (%)', min: 0, max: {max_val:.2f}, colstops: [[0, '#f7fcf0'], [{mid_val:.2f}, '#7bccc4'], [{max_val:.2f}, '#084081']]}}",
+            f"# id: {section_id}",
+            f"# section_name: '{title}'",
+            "# description: 'Global motif conversion ratios (Unconverted / Depth).'",
+            "# plot_type: 'table'",
+            "# pconfig: {namespace: 'Motif Ratios', format: '{:.4f}'}"
         ]
-        with open(args.motif_output, 'w') as f_out:
+        with open(output_path, 'w') as f_out:
             f_out.write("\n".join(header) + "\n")
-            df_pivot.write_csv(f_out, separator='\t', include_header=True, float_precision=4)
+            df_final.write_csv(f_out, separator='\t', include_header=True)
 
-    # 2. Site-level Distribution
+    write_motif_table(transcript_dfs, args.transcript_table_output, "Motif Ratios (Transcriptome)", "motif_ratio_transcript_table")
+    write_motif_table(genome_dfs, args.genome_table_output, "Motif Ratios (Genome)", "motif_ratio_genome_table")
+
+    # 2. Motif Heatmap & Site-level Distribution (from merged sites file)
     if args.sites_file and os.path.exists(args.sites_file):
         try:
+            print(f"Processing sites file: {args.sites_file}")
             df_sites = pl.read_csv(args.sites_file, separator='\t', infer_schema_length=None)
             depth_cols = [c for c in df_sites.columns if c.startswith("Depth_")]
             
+            # --- Heatmap Calculation ---
+            # Site file 'Motif' col has 31bp. Extract center 3-mer.
+            # Center is at index 15 (0-based)
+            heatmap_data = []
+            
+            for d_col in depth_cols:
+                sample = d_col.replace("Depth_", "")
+                u_col = f"Uncon_{sample}"
+                
+                # Filter valid sites for this sample
+                sub = df_sites.filter(pl.col(d_col).is_not_null())
+                sub = sub.with_columns([
+                    pl.col(d_col).cast(pl.Int64),
+                    pl.col(u_col).cast(pl.Int64)
+                ]).filter(pl.col(d_col) > 0)
+                
+                if sub.is_empty(): continue
+                
+                # Extract 3-mer and filter by target base
+                # In the context string of 31bp, center is at index 15.
+                # Motif 3-mer is s[14:17]
+                sub = sub.with_columns(
+                    pl.col("Motif").str.slice(14, 3).str.to_uppercase().alias("3mer")
+                )
+                
+                # Filter by target base (center of 3-mer)
+                sub = sub.filter(pl.col("3mer").str.slice(1, 1) == target_base)
+                
+                # Aggregate
+                agg = sub.group_by("3mer").agg([
+                    pl.col(u_col).sum().alias("Total_Uncon"),
+                    pl.col(d_col).sum().alias("Total_Depth")
+                ])
+                
+                agg = agg.with_columns(
+                    (pl.col("Total_Uncon") / pl.col("Total_Depth") * 100).alias("Ratio_Pct")
+                ).select([
+                    pl.col("3mer").str.replace_all("T", "U").alias("Motif"),
+                    pl.col("Ratio_Pct").alias(sample)
+                ])
+                
+                heatmap_data.append(agg)
+            
+            if heatmap_data:
+                df_hm = heatmap_data[0]
+                for df in heatmap_data[1:]:
+                    df_hm = df_hm.join(df, on="Motif", how="full", coalesce=True)
+                df_hm = df_hm.sort("Motif")
+                
+                numeric_cols = [c for c in df_hm.columns if c != "Motif"]
+                max_val = df_hm.select(numeric_cols).max().max_horizontal().item() or 100.0
+                mid_val = max_val / 2.0
+                
+                header_hm = [
+                    "# id: motif_conversion_heatmap",
+                    "# section_name: 'Motif Conversion Ratios (Heatmap)'",
+                    "# description: 'Sample-level conversion ratios calculated from the merged sites file, shown in %.'",
+                    "# plot_type: 'heatmap'",
+                    f"# pconfig: {{title: 'Motif Ratios (%)', min: 0, max: {max_val:.2f}, colstops: [[0, '#f7fcf0'], [{mid_val:.2f}, '#7bccc4'], [{max_val:.2f}, '#084081']]}}",
+                ]
+                with open(args.heatmap_output, 'w') as f_out:
+                    f_out.write("\n".join(header_hm) + "\n")
+                    df_hm.write_csv(f_out, separator='\t', include_header=True, float_precision=4)
+
+            # --- Distributions ---
             summary_data = []
             ratio_dist_dfs = []
             depth_dist_dfs = []
             
-            # Bins for Ratio (50 bins)
             ratio_bins = np.linspace(0, 1, 51)
-            ratio_labels = [f"{ (ratio_bins[i] + ratio_bins[i+1])/2 :.2f}" for i in range(len(ratio_bins)-1)]
+            ratio_labels = [f"{(ratio_bins[i] + ratio_bins[i+1])/2 :.2f}" for i in range(len(ratio_bins)-1)]
             
-            # Bins for Depth (log scale, 50 bins)
             max_depth = 1000
             for d_col in depth_cols:
                 col_max = df_sites.select(pl.col(d_col).cast(pl.Int64)).max().item()
@@ -92,7 +166,6 @@ def main():
                 uncons = valid_df[u_col].cast(pl.Int64).to_numpy()
                 ratios = uncons / depths
                 
-                # --- Summary ---
                 summary_data.append({
                     'Sample': sample,
                     'Total_Sites': len(valid_df),
@@ -102,19 +175,11 @@ def main():
                     'Max_Ratio': float(ratios.max())
                 })
                 
-                # --- Ratio Distribution ---
                 r_counts, _ = np.histogram(ratios, bins=ratio_bins)
-                r_row = {'Sample': sample}
-                for label, count in zip(ratio_labels, r_counts):
-                    r_row[label] = int(count)
-                ratio_dist_dfs.append(pl.DataFrame([r_row]))
+                ratio_dist_dfs.append(pl.DataFrame({'Sample': sample, **{l: [c] for l, c in zip(ratio_labels, r_counts)}}))
 
-                # --- Depth Distribution ---
                 d_counts, _ = np.histogram(depths, bins=depth_bins)
-                d_row = {'Sample': sample}
-                for label, count in zip(depth_labels, d_counts):
-                    d_row[label] = int(count)
-                depth_dist_dfs.append(pl.DataFrame([d_row]))
+                depth_dist_dfs.append(pl.DataFrame({'Sample': sample, **{l: [c] for l, c in zip(depth_labels, d_counts)}}))
             
             if summary_data:
                 df_summary = pl.DataFrame(summary_data)
@@ -125,38 +190,14 @@ def main():
 
             if ratio_dist_dfs:
                 df_ratio_dist = pl.concat(ratio_dist_dfs)
-                header_ratio = [
-                    "# id: site_ratio_dist", 
-                    "# section_name: 'Site Conversion Ratio Distribution'", 
-                    "# plot_type: 'line'", 
-                    "# pconfig:",
-                    "#    id: 'site_ratio_lineplot'",
-                    "#    title: 'Site Conversion Ratios'",
-                    "#    ylab: 'Number of Sites'",
-                    "#    xlab: 'Conversion Ratio'",
-                    "#    categories: true",
-                    "#    smooth_points: false"
-                ]
+                header_ratio = ["# id: site_ratio_dist", "# section_name: 'Site Conversion Ratio Distribution'", "# plot_type: 'line'", "# pconfig: {title: 'Site Conversion Ratios', ylab: 'Number of Sites', xlab: 'Conversion Ratio', categories: true, smooth_points: false}"]
                 with open(args.dist_output, 'w') as f_out:
                     f_out.write("\n".join(header_ratio) + "\n")
                     df_ratio_dist.write_csv(f_out, separator='\t', include_header=True)
 
             if depth_dist_dfs:
                 df_depth_dist = pl.concat(depth_dist_dfs)
-                header_depth = [
-                    "# id: site_depth_dist", 
-                    "# section_name: 'Site Depth Distribution'", 
-                    "# description: 'Distribution of sequencing depth across all detected sites.'", 
-                    "# plot_type: 'line'", 
-                    "# pconfig:",
-                    "#    id: 'site_depth_lineplot'",
-                    "#    title: 'Site Coverage Depth'",
-                    "#    ylab: 'Number of Sites'",
-                    "#    xlab: 'Depth (Reads)'",
-                    "#    xlog: true",
-                    "#    categories: true",
-                    "#    smooth_points: false"
-                ]
+                header_depth = ["# id: site_depth_dist", "# section_name: 'Site Depth Distribution'", "# description: 'Distribution of sequencing depth across all detected sites.'", "# plot_type: 'line'", "# pconfig: {title: 'Site Coverage Depth', ylab: 'Number of Sites', xlab: 'Depth (Reads)', xlog: true, categories: true, smooth_points: false}"]
                 with open(args.depth_output, 'w') as f_out:
                     f_out.write("\n".join(header_depth) + "\n")
                     df_depth_dist.write_csv(f_out, separator='\t', include_header=True)
