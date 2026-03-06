@@ -4,6 +4,7 @@ import polars as pl
 import os
 import argparse
 import numpy as np
+import json
 
 def main():
     parser = argparse.ArgumentParser()
@@ -43,13 +44,25 @@ def main():
     def write_motif_table(dfs, output_path, title, section_id):
         if not dfs: return
         df_final = dfs[0]
-        for df in dfs[1:]: df_final = df_final.join(df, on='Motif', how='full', coalesce=True)
+        for df in dfs[1:]:
+            df_final = df_final.join(df, on='Motif', how='full', coalesce=True)
         df_final = df_final.sort("Motif")
-        # Increase precision in pconfig format
-        header = [f"# id: {section_id}", f"# section_name: '{title}'", "# plot_type: 'table'", "# pconfig: {namespace: 'Motif Ratios', format: '{:.6f}'}"]
+        
+        # Build col_config to force 6 decimal places in MultiQC display
+        col_config = {}
+        for col in df_final.columns:
+            if col != "Motif":
+                col_config[col] = {"format": "{:.6f}"}
+        
+        header = [
+            f"# id: {section_id}",
+            f"# section_name: '{title}'",
+            "# plot_type: 'table'",
+            "# pconfig:",
+            f"#    col_config: {json.dumps(col_config)}"
+        ]
         with open(output_path, 'w') as f_out:
             f_out.write("\n".join(header) + "\n")
-            # Increase float_precision in write_csv
             df_final.write_csv(f_out, separator='\t', include_header=True, float_precision=6)
 
     write_motif_table(transcript_dfs, args.transcript_table_output, "Motif Ratios (Transcriptome)", "motif_ratio_transcript_table")
@@ -93,21 +106,21 @@ def main():
                     f_out.write("\n".join(header_hm) + "\n")
                     df_hm.write_csv(f_out, separator='\t', include_header=True, float_precision=6)
 
-            # --- Distributions ---
+            # --- Distributions (Wide format) ---
             summary_data = []
             ratio_bins = np.linspace(0, 1, 51)
             ratio_mids = [(ratio_bins[i] + ratio_bins[i+1])/2 for i in range(len(ratio_bins)-1)]
-            ratio_labels = [f"{m:.2f}" for m in ratio_mids]
             
             max_depth = 1000
             for d_col in depth_cols:
                 col_max = df_sites.select(pl.col(d_col).cast(pl.Int64)).max().item()
                 if col_max and col_max > max_depth: max_depth = col_max
             depth_bins = np.logspace(0, np.log10(max_depth + 1), 51)
-            depth_labels = [f"{int(m)}" for m in (depth_bins[:-1] + depth_bins[1:]) / 2]
+            depth_mids = [(depth_bins[i] + depth_bins[i+1])/2 for i in range(len(depth_bins)-1)]
             
-            ratio_rows = []
-            depth_rows = []
+            # Start wide format tables with the X-axis column
+            df_ratio_wide = pl.DataFrame({"Ratio": [f"{m:.2f}" for m in ratio_mids]})
+            df_depth_wide = pl.DataFrame({"Depth": [int(m) for m in depth_mids]})
 
             for d_col in depth_cols:
                 sample = d_col.replace("Depth_", "")
@@ -121,11 +134,12 @@ def main():
                 
                 summary_data.append({'Sample': sample, 'Total_Sites': len(valid_df), 'Mean_Depth': float(depths.mean()), 'Median_Depth': float(np.median(depths)), 'Mean_Ratio': float(ratios.mean()), 'Max_Ratio': float(ratios.max())})
                 
+                # Add sample column to the wide tables
                 r_counts, _ = np.histogram(ratios, bins=ratio_bins)
-                ratio_rows.append({'Sample': sample, **{l: int(c) for l, c in zip(ratio_labels, r_counts)}})
+                df_ratio_wide = df_ratio_wide.with_columns(pl.Series(sample, r_counts))
 
                 d_counts, _ = np.histogram(depths, bins=depth_bins)
-                depth_rows.append({'Sample': sample, **{l: int(c) for l, c in zip(depth_labels, d_counts)}})
+                df_depth_wide = df_depth_wide.with_columns(pl.Series(sample, d_counts))
             
             if summary_data:
                 df_summary = pl.DataFrame(summary_data)
@@ -134,19 +148,17 @@ def main():
                     f_out.write("\n".join(header_sum) + "\n")
                     df_summary.write_csv(f_out, separator='\t', include_header=True)
 
-            if ratio_rows:
-                df_ratio = pl.DataFrame(ratio_rows)
-                header_ratio = ["# id: site_ratio_dist", "# section_name: 'Site Conversion Ratio Distribution'", "# plot_type: 'line'", "# pconfig: {title: 'Site Conversion Ratios', xlab: 'Conversion Ratio', ylab: 'Number of Sites', smooth_points: false}"]
+            if len(df_ratio_wide.columns) > 1:
+                header_ratio = ["# id: site_ratio_dist", "# section_name: 'Site Conversion Ratio Distribution'", "# plot_type: 'line'", "# pconfig: {title: 'Site Conversion Ratios', xlab: 'Conversion Ratio', ylab: 'Number of Sites', categories: true, smooth_points: false}"]
                 with open(args.dist_output, 'w') as f_out:
                     f_out.write("\n".join(header_ratio) + "\n")
-                    df_ratio.write_csv(f_out, separator='\t', include_header=True)
+                    df_ratio_wide.write_csv(f_out, separator='\t', include_header=True)
 
-            if depth_rows:
-                df_depth = pl.DataFrame(depth_rows)
-                header_depth = ["# id: site_depth_dist", "# section_name: 'Site Depth Distribution'", "# plot_type: 'line'", "# pconfig: {title: 'Site Coverage Depth', xlab: 'Depth (Reads)', ylab: 'Number of Sites', xlog: true, smooth_points: false}"]
+            if len(df_depth_wide.columns) > 1:
+                header_depth = ["# id: site_depth_dist", "# section_name: 'Site Depth Distribution'", "# plot_type: 'line'", "# pconfig: {title: 'Site Coverage Depth', xlab: 'Depth (Reads)', ylab: 'Number of Sites', xlog: true, categories: true, smooth_points: false}"]
                 with open(args.depth_output, 'w') as f_out:
                     f_out.write("\n".join(header_depth) + "\n")
-                    df_depth.write_csv(f_out, separator='\t', include_header=True)
+                    df_depth_wide.write_csv(f_out, separator='\t', include_header=True)
                     
         except Exception as e:
             print(f"Error: {e}")
