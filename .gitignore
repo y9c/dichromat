@@ -75,3 +75,6 @@ development/skills/
 internal_files/
 .snakemake/
 *.sif
+
+plots/
+.ipynb_checkpoints/
