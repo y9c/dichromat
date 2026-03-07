@@ -61,16 +61,8 @@ container: None if INSIDE_CONTAINER else CONTAINER
 def resolve_config_path(p):
     if not p or not isinstance(p, str) or os.path.isabs(p):
         return p
-    p = os.path.expanduser(p)
-    # 1. Try relative to CWD (User workspace)
-    if os.path.exists(p):
-        return os.path.abspath(p)
-    # 2. Try relative to Snakefile (Internal pipeline references)
-    internal_p = os.path.join(workflow.basedir, p)
-    if os.path.exists(internal_p):
-        return os.path.normpath(internal_p)
-    # 3. Fallback to absolute path from CWD
-    return os.path.abspath(p)
+    # Resolve relative to CWD (standard predictable behavior)
+    return os.path.abspath(os.path.expanduser(p))
 
 
 REF = config.get("reference", {})
