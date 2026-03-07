@@ -176,47 +176,46 @@ rule internal_readme:
         INTERNALDIR / "README.md",
     benchmark:
         BENCHDIR / "internal_readme.benchmark.txt"
-    run:
-        with open(output[0], "w") as f:
-            f.write("# Internal Pipeline Files\n\n")
-            f.write(
-                "This directory contains intermediate files for the `dichromat` pipeline.\n\n"
-            )
-            f.write("## Data Flow & Directory Structure\n\n")
-            f.write("### 1. `qc/` & `fastq/`\n")
-            f.write("- `qc/trimming/`: Trimming reports from `cutseq`.\n")
-            f.write("- `qc/fastqc_trimmed/`: FastQC reports for trimmed reads.\n")
-            f.write("- `qc/fastqc_unmapped/`: FastQC reports for unmapped reads.\n")
-            f.write("- `fastq/tooshort/`: Reads that were too short after trimming.\n")
-            f.write(
-                "- `fastq/unmapped/`: Reads that failed to map to any reference.\n\n"
-            )
-            f.write("### 2. `ref/`\n")
-            f.write(
-                "- Generated indices and processed reference files organized in subdirectories.\n\n"
-            )
-            f.write("### 3. `bam/`\n")
-            f.write("- `bam/per_run/`: Initial alignments for each sequencing run.\n")
-            f.write(
-                "- `bam/*.genome.bam`: Final merged, deduplicated, and sorted BAM aligned to genome.\n"
-            )
-            f.write("- `bam/*.transcript.bam`: Aligned to the transcriptome.\n\n")
-            f.write("### 4. `stats/`\n")
-            f.write("- `stats/count/`: Read count throughput tables.\n")
-            f.write("- `stats/dedup/`: Detailed logs from `markdup` deduplication.\n")
-            f.write("- `stats/ratio/by_motif/`: Global conversion ratios grouped by 3-mer motifs.\n")
-            f.write("- `stats/mqc/reads/`: Summaries for the Mapping report.\n")
-            f.write("- `stats/mqc/sites/`: Summaries for the Site report.\n\n")
-            f.write("### 5. `pileup/`\n")
-            f.write(
-                "- `pileup/per_sample/`: Site-level data (tsv.gz) for each sample.\n"
-            )
-            f.write("- `pileup/transcript.tsv.gz`: Merged transcriptome pileup.\n")
-            f.write("- `pileup/genome.tsv.gz`: Merged genomic pileup.\n\n")
-            f.write("---\n")
-            f.write(
-                "*Note: For final results (including merged `sites.tsv.gz`), see `report_reads/` and `report_sites/`.*\n"
-            )
+    shell:
+        """
+        cat <<EOF > {output}
+# Internal Pipeline Files
+
+This directory contains intermediate files for the \`dichromat\` pipeline.
+
+## Data Flow & Directory Structure
+
+### 1. \`qc/\` & \`fastq/\`
+- \`qc/trimming/\`: Trimming reports from \`cutseq\`.
+- \`qc/fastqc_trimmed/\`: FastQC reports for trimmed reads.
+- \`qc/fastqc_unmapped/\`: FastQC reports for unmapped reads.
+- \`fastq/tooshort/\`: Reads that were too short after trimming.
+- \`fastq/unmapped/\`: Reads that failed to map to any reference.
+
+### 2. \`ref/\`
+- Generated indices and processed reference files organized in subdirectories.
+
+### 3. \`bam/\`
+- \`bam/per_run/\`: Initial alignments for each sequencing run.
+- \`bam/*.genome.bam\`: Final merged, deduplicated, and sorted BAM aligned to genome.
+- \`bam/*.transcript.bam\`: Aligned to the transcriptome.
+
+### 4. \`stats/\`
+- \`stats/count/\`: Read count throughput tables.
+- \`stats/dedup/\`: Detailed logs from \`markdup\` deduplication.
+- \`stats/ratio/by_motif/\`: Global conversion ratios grouped by 3-mer motifs.
+- \`stats/mqc/reads/\`: Summaries for the Mapping report.
+- \`stats/mqc/sites/\`: Summaries for the Site report.
+
+### 5. \`pileup/\`
+- \`pileup/per_sample/\`: Site-level data (tsv.gz) for each sample.
+- \`pileup/transcript.tsv.gz\`: Merged transcriptome pileup.
+- \`pileup/genome.tsv.gz\`: Merged genomic pileup.
+
+---
+*Note: For final results (including merged \`sites.tsv.gz\`), see \`report_reads/\` and \`report_sites/\`.*
+EOF
+        """
 
 
 rule combine_contamination_fa:
