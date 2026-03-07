@@ -58,38 +58,34 @@ if CONTAINER and not os.path.isabs(CONTAINER):
 container: None if INSIDE_CONTAINER else CONTAINER
 
 
+def resolve_config_path(p):
+    if not p or not isinstance(p, str) or os.path.isabs(p):
+        return p
+    p = os.path.expanduser(p)
+    # 1. Try relative to CWD (User workspace)
+    if os.path.exists(p):
+        return os.path.abspath(p)
+    # 2. Try relative to Snakefile (Internal pipeline references)
+    internal_p = os.path.join(workflow.basedir, p)
+    if os.path.exists(internal_p):
+        return os.path.normpath(internal_p)
+    # 3. Fallback to absolute path from CWD
+    return os.path.abspath(p)
+
+
 REF = config.get("reference", {})
 # Expand user paths and resolve relative paths in REF dictionary
 for ref_type in REF:
     if isinstance(REF[ref_type], dict):
         for key, val in REF[ref_type].items():
-            if isinstance(val, str):
-                # Expand user (~) and resolve relative paths
-                val = os.path.expanduser(val)
-                if not os.path.isabs(val):
-                    val = os.path.normpath(os.path.join(workflow.basedir, val))
-                REF[ref_type][key] = val
+            REF[ref_type][key] = resolve_config_path(val)
     elif isinstance(REF[ref_type], list):
-        resolved_list = []
-        for f in REF[ref_type]:
-            if isinstance(f, str):
-                f = os.path.expanduser(f)
-                if not os.path.isabs(f):
-                    f = os.path.normpath(os.path.join(workflow.basedir, f))
-            resolved_list.append(f)
-        REF[ref_type] = resolved_list
+        REF[ref_type] = [resolve_config_path(f) for f in REF[ref_type]]
     elif isinstance(REF[ref_type], str):
-        val = os.path.expanduser(REF[ref_type])
-        if not os.path.isabs(val):
-            val = os.path.normpath(os.path.join(workflow.basedir, val))
-        REF[ref_type] = val
+        REF[ref_type] = resolve_config_path(REF[ref_type])
 
 
-TEMPDIR = Path(
-    os.path.relpath(
-        config.get("tempdir", os.path.join(workflow.basedir, ".tmp")), workflow.basedir
-    )
-)
+TEMPDIR = Path(config.get("tempdir", ".tmp"))
 # Convert PATH dict to SimpleNamespace for dot notation access (e.g., PATH.python instead of PATH['python'])
 PATH = SimpleNamespace(**config.get("path", {}))
 
