@@ -178,42 +178,42 @@ rule internal_readme:
         BENCHDIR / "internal_readme.benchmark.txt"
     shell:
         """
-        cat <<EOF > {output}
+        cat <<'EOF' > {output}
 # Internal Pipeline Files
 
-This directory contains intermediate files for the \`dichromat\` pipeline.
+This directory contains intermediate files for the `dichromat` pipeline.
 
 ## Data Flow & Directory Structure
 
-### 1. \`qc/\` & \`fastq/\`
-- \`qc/trimming/\`: Trimming reports from \`cutseq\`.
-- \`qc/fastqc_trimmed/\`: FastQC reports for trimmed reads.
-- \`qc/fastqc_unmapped/\`: FastQC reports for unmapped reads.
-- \`fastq/tooshort/\`: Reads that were too short after trimming.
-- \`fastq/unmapped/\`: Reads that failed to map to any reference.
+### 1. `qc/` & `fastq/`
+- `qc/trimming/`: Trimming reports from `cutseq`.
+- `qc/fastqc_trimmed/`: FastQC reports for trimmed reads.
+- `qc/fastqc_unmapped/`: FastQC reports for unmapped reads.
+- `fastq/tooshort/`: Reads that were too short after trimming.
+- `fastq/unmapped/`: Reads that failed to map to any reference.
 
-### 2. \`ref/\`
+### 2. `ref/`
 - Generated indices and processed reference files organized in subdirectories.
 
-### 3. \`bam/\`
-- \`bam/per_run/\`: Initial alignments for each sequencing run.
-- \`bam/*.genome.bam\`: Final merged, deduplicated, and sorted BAM aligned to genome.
-- \`bam/*.transcript.bam\`: Aligned to the transcriptome.
+### 3. `bam/`
+- `bam/per_run/`: Initial alignments for each sequencing run.
+- `bam/*.genome.bam`: Final merged, deduplicated, and sorted BAM aligned to genome.
+- `bam/*.transcript.bam`: Aligned to the transcriptome.
 
-### 4. \`stats/\`
-- \`stats/count/\`: Read count throughput tables.
-- \`stats/dedup/\`: Detailed logs from \`markdup\` deduplication.
-- \`stats/ratio/by_motif/\`: Global conversion ratios grouped by 3-mer motifs.
-- \`stats/mqc/reads/\`: Summaries for the Mapping report.
-- \`stats/mqc/sites/\`: Summaries for the Site report.
+### 4. `stats/`
+- `stats/count/`: Read count throughput tables.
+- `stats/dedup/`: Detailed logs from `markdup` deduplication.
+- `stats/ratio/by_motif/`: Global conversion ratios grouped by 3-mer motifs.
+- `stats/mqc/reads/`: Summaries for the Mapping report.
+- `stats/mqc/sites/`: Summaries for the Site report.
 
-### 5. \`pileup/\`
-- \`pileup/per_sample/\`: Site-level data (tsv.gz) for each sample.
-- \`pileup/transcript.tsv.gz\`: Merged transcriptome pileup.
-- \`pileup/genome.tsv.gz\`: Merged genomic pileup.
+### 5. `pileup/`
+- `pileup/per_sample/`: Site-level data (tsv.gz) for each sample.
+- `pileup/transcript.tsv.gz`: Merged transcriptome pileup.
+- `pileup/genome.tsv.gz`: Merged genomic pileup.
 
 ---
-*Note: For final results (including merged \`sites.tsv.gz\`), see \`report_reads/\` and \`report_sites/\`.*
+*Note: For final results (including merged `sites.tsv.gz`), see `report_reads/` and `report_sites/`.*
 EOF
         """
 
