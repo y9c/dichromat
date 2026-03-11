@@ -23,7 +23,6 @@ samples:
     data:
       - R1: ~/scratch/debug.fq.gz
     adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
-    libtype: TAKARAv2
   # testGLORI:
   #   data:
   #     - R1: ~/scratch/debug_cmx/G-MP2_S4_L007_R1_001.fastq-001.gz
