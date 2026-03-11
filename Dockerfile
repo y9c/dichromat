@@ -40,7 +40,7 @@ RUN uv tool install multiqc==1.33 --no-cache && \
     uv tool install cutseq==0.0.68 --no-cache && \
     uv tool install markdup==0.0.25 --no-cache && \
     uv tool install countmut==0.0.8 --no-cache && \
-    uv tool install coralsnake==0.0.182 --no-cache # Fallback to 0.0.182 for testing build
+    uv tool install coralsnake==0.0.183 --no-cache # Version 0.0.183 includes significant speed improvements
 
 # --- Build samtools/bgzip ---
 WORKDIR /build/sources
