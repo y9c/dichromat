@@ -61,8 +61,17 @@ container: None if INSIDE_CONTAINER else CONTAINER
 def resolve_config_path(p):
     if not p or not isinstance(p, str) or os.path.isabs(p):
         return p
-    # Resolve relative to CWD (standard predictable behavior)
-    return os.path.abspath(os.path.expanduser(p))
+    p = os.path.expanduser(p)
+    # 1. Try relative to CWD (User workspace or where they ran the command)
+    if os.path.exists(p):
+        return os.path.abspath(p)
+    # 2. Try relative to project root (passed from dichromat.sh or Snakefile dir)
+    base = config.get("project_dir", workflow.basedir)
+    p_joined = os.path.join(base, p)
+    if os.path.exists(p_joined):
+        return os.path.normpath(p_joined)
+    # 3. Fallback to abspath from CWD
+    return os.path.abspath(p)
 
 
 REF = config.get("reference", {})

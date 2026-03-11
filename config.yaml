@@ -1,10 +1,6 @@
 container: "development/dichromat.sif"
 is_etam: true
-skip_samples:
-  - "sample1-FTO"
-  - "sample1-IVT"
-
-# adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
+batch: "sample1_debug"
 
 base_change: 'A,G'
 secondary_change: 'C,T'
@@ -23,16 +19,8 @@ reference:
     hisat3n: ~/reference/genome/Homo_sapiens/hisat2_tx_3n/GRCh38.release110
 
 samples:
-  # sample1:
-  #   data:
-  #     - R1: ~/scratch/debug.fq.gz
-  testGLORI:
+  sample1:
     data:
-      - R1: ~/scratch/debug_cmx/G-MP2_S4_L007_R1_001.fastq-001.gz
-        R2: ~/scratch/debug_cmx/G-MP2_S4_L007_R2_001.fastq-003.gz
+      - R1: ~/scratch/debug.fq.gz
+    adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
     libtype: TAKARAv2
-  testCAM:
-    data:
-      - R1: ~/scratch/debug_cmx/C-MR3_S17_L008_R1_001.fastq-004.gz
-        R2: ~/scratch/debug_cmx/C-MR3_S17_L008_R2_001.fastq-002.gz
-    libtype: eCLIP10

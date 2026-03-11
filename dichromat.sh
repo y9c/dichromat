@@ -73,7 +73,7 @@ cleanup_locks() {
         --configfile "${PROJECT_DIR}/config.yaml" \
         -s "${PROJECT_DIR}/Snakefile" \
         --directory "${WORKSPACE_DIR}" \
-        --config batch="$BATCH" \
+        --config batch="$BATCH" project_dir="${PROJECT_DIR}" \
         --unlock >> "${LOGFILE}" 2>&1
     echo -e "\033[0;32m✓ Locks cleaned. Exiting.\033[0m"
     exit 1
@@ -92,7 +92,7 @@ echo "Running pipeline... (output logged to: ${LOGFILE})"
     -p --rerun-incomplete \
     -s "${PROJECT_DIR}/Snakefile" \
     --directory "${WORKSPACE_DIR}" \
-    --config batch="$BATCH" \
+    --config batch="$BATCH" project_dir="${PROJECT_DIR}" \
     -j 100 \
     --use-singularity \
     --singularity-args "-B /data " \
