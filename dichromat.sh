@@ -22,8 +22,9 @@ if [ -f /data/mgt/modules-5.6.1/init/bash ]; then
     module load apptainer/1.4.5 || true
 fi
 
-# Check for batch argument
+# Check for batch and config arguments
 BATCH=""
+CONFIG_FILE="${PROJECT_DIR}/config.yaml"
 EXTRA_ARGS=()
 
 for ((i=1; i<=$#; i++)); do
@@ -31,9 +32,22 @@ for ((i=1; i<=$#; i++)); do
     if [ "$arg" = "--batch" ]; then
         next=$((i+1))
         BATCH="${!next}"
-        i=$((i+1))  # Skip the next argument
+        i=$((i+1))
     elif [[ "$arg" == --batch=* ]]; then
         BATCH="${arg#--batch=}"
+    elif [ "$arg" = "--config" ] || [ "$arg" = "-c" ]; then
+        next=$((i+1))
+        CONFIG_FILE="${!next}"
+        # If relative path, resolve to absolute relative to CWD
+        if [[ ! "$CONFIG_FILE" =~ ^/ ]]; then
+            CONFIG_FILE="$(pwd)/$CONFIG_FILE"
+        fi
+        i=$((i+1))
+    elif [[ "$arg" == --config=* ]]; then
+        CONFIG_FILE="${arg#--config=}"
+        if [[ ! "$CONFIG_FILE" =~ ^/ ]]; then
+            CONFIG_FILE="$(pwd)/$CONFIG_FILE"
+        fi
     else
         EXTRA_ARGS+=("$arg")
     fi
@@ -42,10 +56,17 @@ done
 # Validate batch name
 if [ -z "$BATCH" ]; then
     echo "Error: --batch is required"
-    echo "Usage: ./dichromat.sh --batch <batch_name> [snakemake_args...]"
+    echo "Usage: ./dichromat.sh --batch <batch_name> [--config <config_file>] [snakemake_args...]"
     echo ""
     echo "Examples:"
     echo "  ./dichromat.sh --batch mytest"
+    echo "  ./dichromat.sh --batch mytest --config myconfig.yaml"
+    exit 1
+fi
+
+# Check if config file exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Config file not found: $CONFIG_FILE"
     exit 1
 fi
 
@@ -70,7 +91,7 @@ fi
 cleanup_locks() {
     echo -e "\n\033[1;33m⚠️  Interrupt received. Cleaning up Snakemake locks...\033[0m"
     "$SNAKEMAKE_BIN" \
-        --configfile "${PROJECT_DIR}/config.yaml" \
+        --configfile "$CONFIG_FILE" \
         -s "${PROJECT_DIR}/Snakefile" \
         --directory "${WORKSPACE_DIR}" \
         --config batch="$BATCH" project_dir="${PROJECT_DIR}" \
@@ -82,13 +103,14 @@ cleanup_locks() {
 trap cleanup_locks SIGINT SIGTERM
 
 echo -e "\033[0;32mLog file:\033[0m ${LOGFILE}"
+echo -e "\033[0;32mConfig file:\033[0m ${CONFIG_FILE}"
 echo "Starting pipeline..."
 
 # Run snakemake
 echo "Running pipeline... (output logged to: ${LOGFILE})"
 
 "$SNAKEMAKE_BIN" \
-    --configfile "${PROJECT_DIR}/config.yaml" \
+    --configfile "$CONFIG_FILE" \
     -p --rerun-incomplete \
     -s "${PROJECT_DIR}/Snakefile" \
     --directory "${WORKSPACE_DIR}" \
@@ -107,7 +129,7 @@ else
     # Auto-unlock on failure to prevent manual intervention
     echo -e "\033[1;33mAttempting automatic unlock...\033[0m"
     "$SNAKEMAKE_BIN" \
-        --configfile "${PROJECT_DIR}/config.yaml" \
+        --configfile "$CONFIG_FILE" \
         -s "${PROJECT_DIR}/Snakefile" \
         --directory "${WORKSPACE_DIR}" \
         --config batch="$BATCH" \
