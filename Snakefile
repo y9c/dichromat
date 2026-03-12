@@ -279,7 +279,7 @@ rule prepared_transcript_ref:
     shell:
         """
         mkdir -p $(dirname {output.info})
-        coralsnake prepare -g {input.gtf} -f {input.fa} -o {output.info} -s {output.seq} -c -n -x -t -z
+        {PATH.coralsnake} prepare -g {input.gtf} -f {input.fa} -o {output.info} -s {output.seq} -c -n -x -t -z
         """
 
 
@@ -1024,7 +1024,7 @@ rule liftover_transcript_to_genome:
         BENCHDIR / "liftover_transcript_to_genome_{sample}.benchmark.txt"
     shell:
         """
-        coralsnake liftover -t {threads} -i {input.transcripts} -o {output.transcripts} -a {input.info} -f {params.fai}
+        {PATH.coralsnake} liftover -t {threads} -i {input.transcripts} -o {output.transcripts} -a {input.info} -f {params.fai}
         {PATH.samtools} cat {output.transcripts} {input.genome} | {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam}
         """
 
