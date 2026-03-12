@@ -619,6 +619,7 @@ rule mainmap_align_pe:
         "{PATH.coralsnake} map -t {threads} "
         "--min-mapping-ratio 0.8 "
         "--max-mismatches 6 "
+        "--max-c2t-ratio 0.33 "
         +("-r {input.rf1} --index-dir {INTERNALDIR}/ref/genes " if HAS_GENES else "")
         +"-r {input.rf2} --index-dir {INTERNALDIR}/ref/transcript "
         +"-1 {input.fq1} -2 {input.fq2} "
@@ -652,6 +653,7 @@ rule mainmap_align_se:
         "{PATH.coralsnake} map -t {threads} "
         "--min-mapping-ratio 0.8 "
         "--max-mismatches 6 "
+        "--max-c2t-ratio 0.33 "
         +("-r {input.rf1} --index-dir {INTERNALDIR}/ref/genes " if HAS_GENES else "")
         +"-r {input.rf2} --index-dir {INTERNALDIR}/ref/transcript "
         +"-1 {input.fq} "
