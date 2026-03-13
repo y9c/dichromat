@@ -977,8 +977,6 @@ rule drop_duplicates:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
         txt=INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
     threads: 64
-    resources:
-        mem_mb=512000,
     benchmark:
         BENCHDIR / "drop_duplicates_{sample}_{reftype}.benchmark.txt"
     shell:
