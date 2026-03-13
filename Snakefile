@@ -1328,12 +1328,27 @@ rule generate_mapping_report:
     input:
         INTERNALDIR / "stats/mqc/reads/mapping_stats_mqc.tsv",
         INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
+        expand(
+            INTERNALDIR / "stats/premap/{sample}_{rn}.summary",
+            sample=SAMPLE2DATA.keys(),
+            rn=["run1"],
+        ),
+        expand(
+            INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
+            sample=SAMPLE2DATA.keys(),
+            rn=["run1"],
+        ),
+        expand(
+            INTERNALDIR / "stats/remap/{sample}_{rn}.summary",
+            sample=SAMPLE2DATA.keys(),
+            rn=["run1"],
+        ),
     output:
         "report_reads/mapping.html",
     params:
         report_name="mapping.html",
         report_dir=str(Path("report_reads")),
-        search_dir=str(INTERNALDIR / "stats/mqc/reads"),
+        search_dir=str(INTERNALDIR / "stats"),
     benchmark:
         BENCHDIR / "generate_mapping_report.benchmark.txt"
     shell:
