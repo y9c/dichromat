@@ -60,9 +60,9 @@ RUN curl -L --http1.1 --retry 5 https://github.com/samtools/htslib/releases/down
     mv bgzip /usr/local/bin/ && \
     rm -rf *
 
-# --- Build hisat3n from GitHub release (v0.1.16) ---
+# --- Build hisat3n from GitHub release (v0.1.22) ---
 WORKDIR /build/hisat2
-RUN curl -L https://github.com/y9c/hisat2/archive/refs/tags/v0.1.16.tar.gz -o hisat2.tar.gz && \
+RUN curl -L https://github.com/y9c/hisat2/archive/refs/tags/v0.1.22.tar.gz -o hisat2.tar.gz && \
     tar -xzvf hisat2.tar.gz --strip-components 1 && \
     make -j$(nproc) hisat2-align-s hisat2-build-s hisat2-inspect-s EXTRA_FLAGS="-static-libstdc++ -static-libgcc -mavx2" && \
     g++ -O3 -o hisat3n hisat2_wrapper.cpp -static-libstdc++ -static-libgcc && \
