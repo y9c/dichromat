@@ -127,8 +127,8 @@ for s, v in samples_dict.items():
             k: os.path.expanduser(v3) for k, v3 in dict(v2).items()
         }
 
-HAS_GENES = bool(config.get("genes"))
-HAS_CONTAM = bool(config.get("contamination"))
+HAS_GENES = bool(REF.get("genes"))
+HAS_CONTAM = bool(REF.get("contamination"))
 
 REFTYPES = (
     (["contamination"] if HAS_CONTAM else [])
@@ -773,7 +773,7 @@ rule remap_align_pe:
         """
         set -eo pipefail
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
-            --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
+            --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-1.0 |\
             {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
@@ -811,7 +811,7 @@ rule remap_align_se:
         """
         set -eo pipefail
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
-            --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
+            --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-1.0 |\
             {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
@@ -977,6 +977,8 @@ rule drop_duplicates:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
         txt=INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
     threads: 64
+    resources:
+        mem_mb=512000,
     benchmark:
         BENCHDIR / "drop_duplicates_{sample}_{reftype}.benchmark.txt"
     shell:
