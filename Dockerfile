@@ -38,7 +38,7 @@ ENV UV_TOOL_DIR=/opt/uv_tools
 RUN uv tool install multiqc==1.33 --no-cache && \
     uv tool install snakemake==9.16.3 --no-cache && \
     uv tool install cutseq==0.0.68 --no-cache && \
-    uv tool install markdup==0.0.25 --no-cache && \
+    uv tool install markdup==0.0.26 --no-cache && \
     uv tool install countmut==0.0.8 --no-cache && \
     uv tool install coralsnake==0.0.198 --no-cache # Version 0.0.186 includes speed improvements and OSError fix
 
