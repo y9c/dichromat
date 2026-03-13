@@ -99,7 +99,7 @@ SPLICE_CONTAM = config.get("splice_contamination", False)
 
 
 wildcard_constraints:
-    sample=r"[^/_\.]+",
+    sample=r"[^/\.]+",
     rn=r"run[0-9]+",
     reftype="genome|transcript|genes|contamination",
     libmode="PE|SE",
@@ -774,7 +774,7 @@ rule remap_align_pe:
         set -eo pipefail
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
+            {PATH.samtools} view -e 'exists([AP]) && [AP] <= 6.0 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
@@ -812,7 +812,7 @@ rule remap_align_se:
         set -eo pipefail
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -e 'exists([AP]) && [AP] <= 0.05 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
+            {PATH.samtools} view -e 'exists([AP]) && [AP] <= 6.0 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
@@ -1203,10 +1203,10 @@ rule motif_conversion_rate_stat:
         BENCHDIR / "motif_conversion_rate_stat_{sample}_{reftype}.benchmark.txt"
     shell:
         "zcat {input.pileup} | awk -F '\\t' -v target=\"{params.target_base}\" "
-        "'BEGIN{{OFS=\"\\t\";print \"Motif\",\"Count\",\"Unconverted\",\"Depth\",\"Ratio\"}} "
+        '\'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio"}} '
         "NR>1 && ($6+$9+$7+$10+0)>0{{ "
         "m=toupper(substr($4,15,3)); "
-        "if(m ~ \"^[ATGC]+$\" && substr(m,2,1) == target){{ "
+        'if(m ~ "^[ATGC]+$" && substr(m,2,1) == target){{ '
         "n[m]+=1;u[m]+=$6+$7;d[m]+=$6+$9+$7+$10;r[m]+=($6+$7)/($6+$9+$7+$10)"
         "}}}} END{{for(m in d) print m,n[m],u[m],d[m],r[m]/n[m]}}' > {output}"
 
