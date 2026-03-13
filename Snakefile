@@ -441,7 +441,7 @@ rule premap_align_pe:
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} -k 1 --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
             {PATH.samtools} view -@ {threads} -e 'flag.proper_pair && !flag.unmap && !flag.munmap && qlen-sclen >= 30 && [XM] * 15 < (qlen-sclen)' -O BAM -U {output.unmapped} -o {output.mapped}
         """
@@ -479,7 +479,7 @@ rule premap_align_se:
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} -k 1 --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
             {PATH.samtools} view -@ {threads} -e '!flag.unmap && qlen-sclen >= 30 && [XM] * 15 < qlen-sclen' -O BAM -U {output.unmapped} -o {output.mapped}
         """
@@ -772,9 +772,9 @@ rule remap_align_pe:
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} -k 1 --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -F 0x100 -e '(([NS] + [NC]*0.2) / qlen) <= 0.08' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
+            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
@@ -810,9 +810,9 @@ rule remap_align_se:
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} -k 1 --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -F 0x100 -e '(([NS] + [NC]*0.2) / qlen) <= 0.08' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
+            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
