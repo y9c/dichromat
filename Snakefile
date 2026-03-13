@@ -441,7 +441,7 @@ rule premap_align_pe:
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} -k 1 --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
             {PATH.samtools} view -@ {threads} -e 'flag.proper_pair && !flag.unmap && !flag.munmap && qlen-sclen >= 30 && [XM] * 15 < (qlen-sclen)' -O BAM -U {output.unmapped} -o {output.mapped}
         """
@@ -479,7 +479,7 @@ rule premap_align_se:
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} -k 1 --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
             {PATH.samtools} view -@ {threads} -e '!flag.unmap && qlen-sclen >= 30 && [XM] * 15 < qlen-sclen' -O BAM -U {output.unmapped} -o {output.mapped}
         """
@@ -546,9 +546,9 @@ rule premap_get_unmapped:
     shell:
         """
         if [ "{wildcards.libmode}" == "PE" ]; then
-            {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
+            {PATH.samtools} fastq -F 0x900 -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
         else
-            {PATH.samtools} fastq -0 {output.r1} -n {input}
+            {PATH.samtools} fastq -F 0x900 -0 {output.r1} -n {input}
             touch {output.r2}
         fi
         """
@@ -719,7 +719,7 @@ rule mainmap_get_unmapped_pe:
         BENCHDIR / "mainmap_get_unmapped_pe_{sample}_{rn}.benchmark.txt"
     shell:
         """
-        {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
+        {PATH.samtools} fastq -F 0x900 -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
         """
 
 
@@ -732,7 +732,7 @@ rule mainmap_get_unmapped_se:
         BENCHDIR / "mainmap_get_unmapped_se_{sample}_{rn}.benchmark.txt"
     shell:
         """
-        {PATH.samtools} fastq -0 {output.r1} -n {input}
+        {PATH.samtools} fastq -F 0x900 -0 {output.r1} -n {input}
         """
 
 
@@ -772,9 +772,9 @@ rule remap_align_pe:
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} -k 1 --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
+            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
@@ -810,9 +810,9 @@ rule remap_align_se:
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} -k 1 --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
+        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
+            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
@@ -871,10 +871,10 @@ rule remap_get_unmapped:
     shell:
         """
         if [ "{wildcards.libmode}" == "PE" ]; then
-            {PATH.samtools} fastq -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
+            {PATH.samtools} fastq -F 0x900 -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
         else
             touch {output.r2}
-            {PATH.samtools} fastq -0 {output.r1} -n {input}
+            {PATH.samtools} fastq -F 0x900 -0 {output.r1} -n {input}
         fi
         """
 
