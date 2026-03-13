@@ -774,7 +774,7 @@ rule remap_align_pe:
         set -eo pipefail
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.06 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
+            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.10 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
@@ -812,7 +812,7 @@ rule remap_align_se:
         set -eo pipefail
         {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
             --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.06 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
+            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.10 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
         """
 
 
