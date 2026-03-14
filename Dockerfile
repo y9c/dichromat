@@ -35,12 +35,13 @@ RUN uv pip install --python ${APP_VENV_PATH}/bin/python --no-cache ${CORE_PACKAG
 # CLI tools
 ENV UV_TOOL_BIN_DIR=/usr/local/bin
 ENV UV_TOOL_DIR=/opt/uv_tools
+# Install python tools (Consolidated to save layers/space)
 RUN uv tool install multiqc==1.33 --no-cache && \
     uv tool install snakemake==9.16.3 --no-cache && \
     uv tool install cutseq==0.0.68 --no-cache && \
     uv tool install markdup==0.0.26 --no-cache && \
     uv tool install countmut==0.0.8 --no-cache && \
-    uv tool install coralsnake==0.0.198 --no-cache # Version 0.0.186 includes speed improvements and OSError fix
+    uv tool install coralsnake==0.0.207 --no-cache
 
 # --- Build samtools/bgzip ---
 WORKDIR /build/sources
@@ -97,15 +98,15 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     ca-certificates zlib1g libxml2 libbz2-1.0 liblzma5 pigz && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Copy only necessary folders/bins from builder to keep size minimal
 COPY --from=builder /opt /opt
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-COPY ./Snakefile ./default.yaml ./entrypoint ./VERSION ${PIPELINE_HOME}/
+WORKDIR ${PIPELINE_HOME}
 COPY ./src/ ${PIPELINE_HOME}/src/
+COPY ./Snakefile ./default.yaml ./entrypoint ./VERSION ${PIPELINE_HOME}/
 
-RUN chmod +x ${PIPELINE_HOME}/src/*.py && \
-    ln -s ${PIPELINE_HOME}/src/*.py /usr/local/bin/
+RUN chmod +x ${PIPELINE_HOME}/entrypoint
 
 WORKDIR /workspace
-RUN chmod +x ${PIPELINE_HOME}/entrypoint
 ENTRYPOINT ["/pipeline/entrypoint"]

@@ -12,6 +12,7 @@ reference:
     - ~/reference/contamination/contamination.fa
     - ref/PET28a-tadA.fa
   genes:
+    - ~/rawdata_public/GLORI_v3/ref.fa
     - ~/reference/genes/Homo_sapiens.rRNA_tRNA_sncRNA.fa
   genome:
     fa: ~/reference/genome/Homo_sapiens/GRCh38.fa
@@ -23,13 +24,15 @@ samples:
     data:
       - R1: ~/scratch/debug.fq.gz
     adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX>XXXAGATCGGAAGAGCGTCGTGT"
-  # testGLORI:
-  #   data:
-  #     - R1: ~/scratch/debug_cmx/G-MP2_S4_L007_R1_001.fastq-001.gz
-  #       R2: ~/scratch/debug_cmx/G-MP2_S4_L007_R2_001.fastq-003.gz
-  #   libtype: TAKARAv2
-  # testCAM:
-  #   data:
-  #     - R1: ~/scratch/debug_cmx/C-MR3_S17_L008_R1_001.fastq-004.gz
-  #       R2: ~/scratch/debug_cmx/C-MR3_S17_L008_R2_001.fastq-002.gz
-  #   libtype: eCLIP10
+  
+# samples:
+#   testGLORI:
+#     data:
+#       - R1: ~/scratch/debug_cmx/G-MP2_S4_L007_R1_001.fastq-001.gz
+#         R2: ~/scratch/debug_cmx/G-MP2_S4_L007_R2_001.fastq-003.gz
+#     libtype: TAKARAv2
+#   testCAM:
+#     data:
+#       - R1: ~/scratch/debug_cmx/C-MR3_S17_L008_R1_001.fastq-004.gz
+#         R2: ~/scratch/debug_cmx/C-MR3_S17_L008_R2_001.fastq-002.gz
+#     libtype: eCLIP10
