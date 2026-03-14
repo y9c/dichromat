@@ -12,6 +12,7 @@ etamseq.def
 
 # Development and Local tools
 dichromat-vm-builder.skill
+development/scripts/update_zenodo*.py
 
 # Development folder - specific ignores only
 # (skills/ is tracked, but other dev artifacts are ignored)
