@@ -1364,11 +1364,16 @@ rule generate_mapping_report:
     params:
         report_name="mapping.html",
         report_dir=str(Path("report_reads")),
-        search_dir=str(INTERNALDIR / "stats"),
+        search_dirs=[
+            str(INTERNALDIR / "stats/mqc/reads"),
+            str(INTERNALDIR / "stats/premap"),
+            str(INTERNALDIR / "stats/mainmap"),
+            str(INTERNALDIR / "stats/remap"),
+        ],
     benchmark:
         BENCHDIR / "generate_mapping_report.benchmark.txt"
     shell:
-        "{PATH.multiqc} -f --no-ansi -n {params.report_name} -o {params.report_dir} {params.search_dir}"
+        "{PATH.multiqc} -f --no-ansi -n {params.report_name} -o {params.report_dir} {params.search_dirs}"
 
 
 rule generate_site_report:
