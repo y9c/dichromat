@@ -217,8 +217,9 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     # Final Merge of Parquet Chunks
     logging.info("Merging temporary Parquet chunks...")
     if chunk_files:
-        # FIX: Use sink_csv to ensure memory footprint is stable even for the final join
-        lf_final = pl.concat([pl.scan_parquet(c) for c in chunk_files]).sort(["Chrom", "Pos", "Strand"])
+        # FIX: Avoid global sort() which is non-streaming and causes OOM.
+        # Chunks are already sorted by Chrom, Pos, Strand during creation.
+        lf_final = pl.concat([pl.scan_parquet(c) for c in chunk_files])
         
         final_raw = output_file.replace(".gz", "") if output_file.endswith(".gz") else output_file + ".raw"
         
