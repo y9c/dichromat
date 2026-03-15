@@ -1298,15 +1298,10 @@ rule group_and_pval_cal:
 # multiqc custom
 
 
-rule aggregate_multiqc_stats:
+rule mqc_aggregate_mapping_stats:
     input:
         counts=expand(
             INTERNALDIR / "stats/count/{sample}.tsv", sample=SAMPLE2DATA.keys()
-        ),
-        motifs=expand(
-            INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
-            sample=SAMPLE2DATA.keys(),
-            reftype=["transcript", "genome"],
         ),
         dedup_logs=expand(
             INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
@@ -1318,24 +1313,40 @@ rule aggregate_multiqc_stats:
             sample=SAMPLE2DATA.keys(),
             rn=["run1"],
         ),
-        sites_file="report_sites/sites.tsv.gz" if IS_ETAM else [],
     output:
         mapping=INTERNALDIR / "stats/mqc/reads/mapping_stats_mqc.tsv",
+        dedup=INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
+    benchmark:
+        BENCHDIR / "mqc_aggregate_mapping_stats.benchmark.txt"
+    threads: 4
+    shell:
+        """
+        {PATH.mqc_mapping} {output.mapping} {output.dedup} {input.counts} --dedup-logs {input.dedup_logs} --trim-jsons {input.trim_jsons}
+        """
+
+
+rule mqc_aggregate_site_stats:
+    input:
+        motifs=expand(
+            INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
+            sample=SAMPLE2DATA.keys(),
+            reftype=["transcript", "genome"],
+        ),
+        sites_file="report_sites/sites.tsv.gz" if IS_ETAM else [],
+    output:
         motifs=INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
         site_sum=INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
         site_dist=INTERNALDIR / "stats/mqc/sites/site_distribution_mqc.tsv",
         site_depth=INTERNALDIR / "stats/mqc/sites/site_depth_mqc.tsv",
         motif_transcript=INTERNALDIR / "stats/mqc/sites/motif_ratio_transcript_mqc.tsv",
         motif_genome=INTERNALDIR / "stats/mqc/sites/motif_ratio_genome_mqc.tsv",
-        dedup=INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
     params:
         target_base=config.get("base_change", "A,G").split(",")[0],
     benchmark:
-        BENCHDIR / "aggregate_multiqc_stats.benchmark.txt"
+        BENCHDIR / "mqc_aggregate_site_stats.benchmark.txt"
     threads: 8
     shell:
         """
-        {PATH.mqc_mapping} {output.mapping} {output.dedup} {input.counts} --dedup-logs {input.dedup_logs} --trim-jsons {input.trim_jsons}
         {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} {output.site_depth} {output.motif_transcript} {output.motif_genome} --motif-files {input.motifs} --sites-file {input.sites_file} --target-base {params.target_base}
         """
 
