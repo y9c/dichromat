@@ -152,7 +152,7 @@ rule all:
         "report_reads/unmapped.html",
         "report_sites/sites.html",
         "report_sites/filtered.tsv" if IS_ETAM else "report_sites/sites.tsv.gz",
-        expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
+        expand("report_sites/grouped/{group}.tsv.gz", group=GROUP2SAMPLE.keys()),
         [
             INTERNALDIR / f"fastq/tooshort/{sample}_{rn}_{rd}.fq.gz"
             for sample, v in SAMPLE2DATA.items()
@@ -1283,7 +1283,7 @@ rule group_and_pval_cal:
     input:
         "report_sites/sites.tsv.gz",
     output:
-        "report_sites/grouped/{group}.parquet",
+        "report_sites/grouped/{group}.tsv.gz",
     params:
         names=lambda wildcards: GROUP2SAMPLE[wildcards.group],
     threads: 8

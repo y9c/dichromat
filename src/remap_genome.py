@@ -85,7 +85,6 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     main_chroms = sorted([c for c in all_chroms if re.match(r"^(chr)?([0-9]+|[XYM]|MT)$", c)])
     other_contigs = [c for c in all_chroms if c not in main_chroms]
 
-    # COARSE BATCHING: Group main chroms in batches of 5
     batches = []
     batch_size = 5
     for i in range(0, len(main_chroms), batch_size):
@@ -101,7 +100,6 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     out_dir.mkdir(parents=True, exist_ok=True)
     temp_prefix = str(out_dir / (Path(output_file).name + ".tmp_chunk"))
 
-    # Mapping back list must be available to lambda
     gene_names_list = gene_order_list
 
     chunk_files = []
@@ -220,11 +218,13 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     # Final Merge of Parquet Chunks
     logging.info("Merging temporary Parquet chunks...")
     if chunk_files:
+        # Use lazy scan and sink to keep final merge memory-safe
         lf_final = pl.concat([pl.scan_parquet(c) for c in chunk_files]).sort(["Chrom", "Pos", "Strand"])
-        if output_file.endswith(".gz"):
-            lf_final.collect().write_csv(output_file, separator="\t", quote_style="never", compression="gzip")
-        elif output_file.endswith(".parquet"):
+        if output_file.endswith(".parquet"):
             lf_final.sink_parquet(output_file, compression="zstd")
+        elif output_file.endswith(".gz"):
+            # Maintain backward compatibility if requested
+            lf_final.collect().write_csv(output_file, separator="\t", quote_style="never", compression="gzip")
         else:
             lf_final.collect().write_csv(output_file, separator="\t", quote_style="never")
 
