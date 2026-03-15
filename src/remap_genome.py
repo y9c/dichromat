@@ -5,6 +5,7 @@ import polars as pl
 import re
 import argparse
 import glob
+import subprocess
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -85,7 +86,7 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     main_chroms = sorted([c for c in all_chroms if re.match(r"^(chr)?([0-9]+|[XYM]|MT)$", c)])
     other_contigs = [c for c in all_chroms if c not in main_chroms]
 
-    # BATCHING: Process main chroms ONE BY ONE to strictly cap memory
+    # Process main chroms ONE BY ONE to strictly cap memory
     batches = [[c] for c in main_chroms]
     if other_contigs:
         batches.append(other_contigs)
@@ -216,18 +217,21 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     # Final Merge of Parquet Chunks
     logging.info("Merging temporary Parquet chunks...")
     if chunk_files:
-        # Use lazy scan and sink to keep final merge memory-safe
+        # FIX: Use sink_csv to ensure memory footprint is stable even for the final join
         lf_final = pl.concat([pl.scan_parquet(c) for c in chunk_files]).sort(["Chrom", "Pos", "Strand"])
-
-        logging.info("Collecting final result and writing output...")
-        df_final = lf_final.collect(engine="streaming")
-
+        
+        final_raw = output_file.replace(".gz", "") if output_file.endswith(".gz") else output_file + ".raw"
+        
+        logging.info(f"Sinking final result to {final_raw}...")
+        lf_final.sink_csv(final_raw, separator="\t", quote_style="never")
+        
         if output_file.endswith(".gz"):
-            df_final.write_csv(output_file, separator="\t", quote_style="never", compression="gzip")
-        elif output_file.endswith(".parquet"):
-            df_final.write_parquet(output_file, compression="zstd")
-        else:
-            df_final.write_csv(output_file, separator="\t", quote_style="never")
+            logging.info(f"Compressing {final_raw} to {output_file}...")
+            subprocess.run(["gzip", "-f", final_raw])
+            if final_raw != output_file:
+                if os.path.exists(final_raw + ".gz"): os.rename(final_raw + ".gz", output_file)
+        elif final_raw != output_file:
+            os.rename(final_raw, output_file)
 
         for c in chunk_files:
             os.remove(c)
