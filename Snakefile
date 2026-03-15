@@ -206,8 +206,8 @@ This directory contains intermediate files for the `dichromat` pipeline.
 
 ### 5. `pileup/`
 - `pileup/per_sample/`: Site-level data (tsv.gz) for each sample.
-- `pileup/transcript.tsv.gz`: Merged transcriptome pileup.
-- `pileup/genome.tsv.gz`: Merged genomic pileup.
+- `pileup/transcript.parquet`: Merged transcriptome pileup.
+- `pileup/genome.parquet`: Merged genomic pileup.
 
 ---
 *Note: For final results (including merged `sites.tsv.gz`), see `report_reads/` and `report_sites/`.*
@@ -1234,7 +1234,7 @@ rule join_pileup_table:
             sample=SAMPLE2DATA.keys(),
         ),
     output:
-        INTERNALDIR / "pileup/{reftype}.tsv.gz",
+        INTERNALDIR / "pileup/{reftype}.parquet",
     params:
         samples=" ".join(SAMPLE2DATA.keys()),
         requires=" ".join(
@@ -1252,8 +1252,8 @@ rule join_pileup_table:
 rule merge_gene_and_genome_table:
     input:
         info=INTERNALDIR / "ref/transcript.tsv",
-        transcripts=INTERNALDIR / "pileup/transcript.tsv.gz",
-        genome=INTERNALDIR / "pileup/genome.tsv.gz",
+        transcripts=INTERNALDIR / "pileup/transcript.parquet",
+        genome=INTERNALDIR / "pileup/genome.parquet",
     output:
         "report_sites/sites.tsv.gz",
     threads: 16
