@@ -85,7 +85,6 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     main_chroms = sorted([c for c in all_chroms if re.match(r"^(chr)?([0-9]+|[XYM]|MT)$", c)])
     other_contigs = [c for c in all_chroms if c not in main_chroms]
 
-    # COARSE BATCHING: Group main chroms in batches of 5
     batches = []
     batch_size = 5
     for i in range(0, len(main_chroms), batch_size):
@@ -101,7 +100,6 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     out_dir.mkdir(parents=True, exist_ok=True)
     temp_prefix = str(out_dir / (Path(output_file).name + ".tmp_chunk"))
 
-    # Mapping back list must be available to lambda
     gene_names_list = gene_order_list
 
     chunk_files = []
@@ -113,7 +111,6 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
             exons_df_raw.filter(pl.col("Chrom").is_in(chrom_batch)).get_column("GeneName").unique().to_list()
         )
 
-        # 1. Transcript remapping
         df1_lazy = (
             scan_input(gene_df_file)
             .filter(pl.col("Chrom").is_in(relevant_genes_list))
@@ -136,7 +133,6 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
             )
         )
 
-        # 2. Genome data
         df2_lazy = (
             scan_input(genome_df_file)
             .filter(pl.col("Chrom").is_in(chrom_batch))
@@ -220,13 +216,21 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
     # Final Merge of Parquet Chunks
     logging.info("Merging temporary Parquet chunks...")
     if chunk_files:
+        # FIX: USE SINK_CSV OR LAZY MERGE TO AVOID OOM
+        # We concatenate lazily and collect only once for writing.
+        # For huge files, sink_csv is better but Polars doesn't support gzip in sink_csv yet.
+        # So we collect() then write_csv().
         lf_final = pl.concat([pl.scan_parquet(c) for c in chunk_files]).sort(["Chrom", "Pos", "Strand"])
+        
+        logging.info("Collecting final result and writing output...")
+        df_final = lf_final.collect(engine="streaming")
+        
         if output_file.endswith(".gz"):
-            lf_final.collect().write_csv(output_file, separator="\t", quote_style="never", compression="gzip")
+            df_final.write_csv(output_file, separator="\t", quote_style="never", compression="gzip")
         elif output_file.endswith(".parquet"):
-            lf_final.sink_parquet(output_file, compression="zstd")
+            df_final.write_parquet(output_file, compression="zstd")
         else:
-            lf_final.collect().write_csv(output_file, separator="\t", quote_style="never")
+            df_final.write_csv(output_file, separator="\t", quote_style="never")
 
         for c in chunk_files:
             os.remove(c)
