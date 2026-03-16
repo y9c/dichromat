@@ -178,34 +178,38 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, 
         )
 
         if not df_chunk.is_empty():
-
-            def format_mapped(row, names_list):
-                ids, pos = row["ids"], row["pos"]
-                if ids is None or len(ids) == 0:
-                    return '""', '""'
-                seen, final_names, final_pos = set(), [], []
-                for i, p in zip(ids, pos):
-                    if i not in seen:
-                        final_names.append(names_list[i])
-                        final_pos.append(str(p))
-                        seen.add(i)
-                linked = sorted(zip(list(seen), final_names, final_pos), key=lambda x: x[0])
-                return ";".join([x[1] for x in linked]), ";".join([x[2] for x in linked])
+            # NATIVE POLARS FORMATTING: much faster and memory-stable than map_elements
+            # 1. Expand ids/pos lists to rows
+            # 2. Join with gene_map_df to get GeneName
+            # 3. Sort by GeneIdx to ensure deterministic output
+            # 4. Group by Chrom/Pos/Strand and join with ";"
+            
+            df_fmt = (
+                df_chunk.select(["Chrom", "Pos", "Strand", "ids", "pos"])
+                .explode(["ids", "pos"])
+                .drop_nulls("ids")
+                .unique(["Chrom", "Pos", "Strand", "ids"])
+                .join(gene_map_df, left_on="ids", right_on="GeneIdx", how="inner")
+                .sort(["Chrom", "Pos", "Strand", "ids"])
+                .with_columns(pl.col("pos").cast(pl.String))
+                .group_by(["Chrom", "Pos", "Strand"], maintain_order=True)
+                .agg([
+                    pl.col("GeneName").str.concat(";"),
+                    pl.col("pos").str.concat(";").alias("GenePos")
+                ])
+            )
 
             df_chunk = (
-                df_chunk.with_columns(
-                    pl.struct(["ids", "pos"])
-                    .map_elements(
-                        lambda x: format_mapped(x, gene_names_list),
-                        return_dtype=pl.Struct([pl.Field("GeneName", pl.String), pl.Field("GenePos", pl.String)]),
-                    )
-                    .alias("fmt")
-                )
-                .unnest("fmt")
-                .drop(["ids", "pos"])
+                df_chunk.drop(["ids", "pos"])
+                .join(df_fmt, on=["Chrom", "Pos", "Strand"], how="left")
+                .with_columns([
+                    pl.col("GeneName").fill_null(""),
+                    pl.col("GenePos").fill_null("")
+                ])
                 .select(["Chrom", "Pos", "Strand", "GeneName", "GenePos", "Motif"] + count_cols)
                 .sort(["Chrom", "Pos", "Strand"])
             )
+            
             chunk_file = f"{temp_prefix}.{idx}.parquet"
             df_chunk.write_parquet(chunk_file, compression="zstd")
             chunk_files.append(chunk_file)
