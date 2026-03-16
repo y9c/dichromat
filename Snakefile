@@ -1345,6 +1345,9 @@ rule mqc_aggregate_site_stats:
     benchmark:
         BENCHDIR / "mqc_aggregate_site_stats.benchmark.txt"
     threads: 8
+    resources:
+        runtime=240,
+        mem_mb=32000
     shell:
         """
         {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} {output.site_depth} {output.motif_transcript} {output.motif_genome} --motif-files {input.motifs} --sites-file {input.sites_file} --target-base {params.target_base}
