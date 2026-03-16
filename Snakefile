@@ -1259,6 +1259,9 @@ rule merge_gene_and_genome_table:
     threads: 16
     benchmark:
         BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
+    resources:
+        runtime=720,
+        mem_mb=64000
     shell:
         """
         {PATH.remap_genome} -t {input.info} -a {input.transcripts} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
