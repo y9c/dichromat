@@ -111,39 +111,113 @@ def main():
                     df_hm.write_csv(f_out, separator='\t', include_header=True, float_precision=6)
 
             # 2. DISTRIBUTION PLAN: Collect valid Depth and Ratio pairs for histogram calculation
-            # This is the most RAM-intensive part as we must hold numbers for histograms.
-            # We process samples sequentially for histograms to protect memory, 
-            # but we only read from the COLLECTED reduced data.
-            # Actually, to truly be single pass, we should use Polars hist or bucketing.
-            # For now, we'll stream each sample separately but it's much faster than reading the file 6 times.
-            
+            # Use a chunked reader to process the file exactly ONCE, avoiding 12 separate scans.
             df_ratio_wide = pl.DataFrame({"Ratio": [f"{m:.2f}" for m in ratio_mids]})
             df_depth_wide = pl.DataFrame({"Depth": [int(m) for m in depth_mids]})
-            summary_data = []
-
-            for d_col in depth_cols:
-                sample = d_col.replace("Depth_", "")
-                u_col = f"Uncon_{sample}"
-                # Get only what we need for this sample
-                sample_data = (
-                    lf.select([d_col, u_col])
-                    .filter(pl.col(d_col).is_not_null() & (pl.col(d_col).cast(pl.Int64) > 0))
-                    .select([
-                        pl.col(d_col).cast(pl.Int64).alias("d"),
-                        (pl.col(u_col).cast(pl.Int64) / pl.col(d_col).cast(pl.Int64)).alias("r")
-                    ])
-                    .collect(engine="streaming")
-                )
+            
+            # Initialize accumulators for each sample
+            sample_stats = {col.replace("Depth_", ""): {"total_sites": 0, "sum_depth": 0, "sum_ratio": 0, "max_ratio": 0.0, "ratio_counts": np.zeros(len(ratio_bins)-1, dtype=int), "depth_counts": np.zeros(len(depth_bins)-1, dtype=int), "all_depths": []} for col in depth_cols}
+            
+            # We need to compute Median Depth, which requires all depths or an approximation.
+            # To keep memory strictly bounded, we will store a subsample of depths or just keep them if they fit.
+            # For a 64GB node, storing 12 arrays of 100M ints is ~10GB, which is fine. But we can just use the chunked reader.
+            
+            # Read in chunks using read_csv_batched (requires Polars >= 0.19)
+            # Since scan_csv().collect(streaming=True) is not easily chunkable for custom python loops,
+            # we will read the file in chunks using a lazy slice approach or read_csv_batched.
+            
+            try:
+                reader = pl.read_csv_batched(args.sites_file, separator='\t', batch_size=1_000_000)
+                while True:
+                    batches = reader.next_batches(1)
+                    if not batches:
+                        break
+                    chunk = batches[0]
+                    
+                    for d_col in depth_cols:
+                        sample = d_col.replace("Depth_", "")
+                        u_col = f"Uncon_{sample}"
+                        
+                        if d_col not in chunk.columns or u_col not in chunk.columns:
+                            continue
+                            
+                        # Filter valid sites for this sample in this chunk
+                        valid_mask = chunk[d_col].is_not_null() & (chunk[d_col] > 0)
+                        if not valid_mask.any():
+                            continue
+                            
+                        d_vals = chunk[d_col].filter(valid_mask).to_numpy()
+                        u_vals = chunk[u_col].filter(valid_mask).to_numpy()
+                        r_vals = u_vals / d_vals
+                        
+                        stats = sample_stats[sample]
+                        stats["total_sites"] += len(d_vals)
+                        stats["sum_depth"] += d_vals.sum()
+                        stats["sum_ratio"] += r_vals.sum()
+                        if len(r_vals) > 0:
+                            stats["max_ratio"] = max(stats["max_ratio"], float(r_vals.max()))
+                        
+                        # Histograms
+                        r_c, _ = np.histogram(r_vals, bins=ratio_bins)
+                        d_c, _ = np.histogram(d_vals, bins=depth_bins)
+                        stats["ratio_counts"] += r_c
+                        stats["depth_counts"] += d_c
+                        
+                        # Store depths for median calculation (subsampling to save RAM if needed, but append for now)
+                        stats["all_depths"].append(d_vals)
+            except AttributeError:
+                # Fallback for older Polars versions without read_csv_batched
+                lf = pl.scan_csv(args.sites_file, separator='\t', infer_schema_length=None)
+                # Load all required columns into memory at once to avoid multiple scans
+                req_cols = depth_cols + [c.replace("Depth_", "Uncon_") for c in depth_cols]
+                df_all = lf.select(req_cols).collect(engine="streaming")
                 
-                if not sample_data.is_empty():
-                    depths = sample_data["d"].to_numpy()
-                    ratios = sample_data["r"].to_numpy()
-                    summary_data.append({'Sample': sample, 'Total Sites': len(sample_data), 'Mean Depth': float(depths.mean()), 'Median Depth': float(np.median(depths)), 'Mean Ratio': float(ratios.mean()), 'Max Ratio': float(ratios.max())})
-                    r_counts, _ = np.histogram(ratios, bins=ratio_bins)
-                    df_ratio_wide = df_ratio_wide.with_columns(pl.Series(sample, r_counts))
-                    d_counts, _ = np.histogram(depths, bins=depth_bins)
-                    df_depth_wide = df_depth_wide.with_columns(pl.Series(sample, d_counts))
-                del sample_data
+                for d_col in depth_cols:
+                    sample = d_col.replace("Depth_", "")
+                    u_col = f"Uncon_{sample}"
+                    
+                    sample_data = df_all.select([d_col, u_col]).filter(pl.col(d_col).is_not_null() & (pl.col(d_col).cast(pl.Int64) > 0))
+                    
+                    if not sample_data.is_empty():
+                        d_vals = sample_data[d_col].cast(pl.Int64).to_numpy()
+                        u_vals = sample_data[u_col].cast(pl.Int64).to_numpy()
+                        r_vals = u_vals / d_vals
+                        
+                        stats = sample_stats[sample]
+                        stats["total_sites"] = len(d_vals)
+                        stats["sum_depth"] = d_vals.sum()
+                        stats["sum_ratio"] = r_vals.sum()
+                        stats["max_ratio"] = float(r_vals.max())
+                        
+                        r_c, _ = np.histogram(r_vals, bins=ratio_bins)
+                        d_c, _ = np.histogram(d_vals, bins=depth_bins)
+                        stats["ratio_counts"] = r_c
+                        stats["depth_counts"] = d_c
+                        stats["all_depths"] = [d_vals]
+                del df_all
+
+            summary_data = []
+            for sample, stats in sample_stats.items():
+                if stats["total_sites"] > 0:
+                    all_d = np.concatenate(stats["all_depths"]) if stats["all_depths"] else np.array([])
+                    median_depth = float(np.median(all_d)) if len(all_d) > 0 else 0.0
+                    mean_depth = float(stats["sum_depth"] / stats["total_sites"])
+                    mean_ratio = float(stats["sum_ratio"] / stats["total_sites"])
+                    
+                    summary_data.append({
+                        'Sample': sample, 
+                        'Total Sites': stats["total_sites"], 
+                        'Mean Depth': mean_depth, 
+                        'Median Depth': median_depth, 
+                        'Mean Ratio': mean_ratio, 
+                        'Max Ratio': stats["max_ratio"]
+                    })
+                    
+                    df_ratio_wide = df_ratio_wide.with_columns(pl.Series(sample, stats["ratio_counts"]))
+                    df_depth_wide = df_depth_wide.with_columns(pl.Series(sample, stats["depth_counts"]))
+                    
+                    # Free up memory
+                    stats["all_depths"] = []
 
             # Final Summary & Distribution outputs
             if summary_data:
