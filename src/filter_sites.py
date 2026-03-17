@@ -314,36 +314,51 @@ if __name__ == "__main__":
         },
     ).pivot(index=["Motif3", "GC"], on="library", values="bg")
 
-    logging.info("Combining background statistics")
-    df_sites = df_sites.select(pl.all().exclude("^Background_.*$")).join(
-        df_ft, on=["Motif3", "GC"], how="left"
-    )
-
-    logging.info("Validating sites")
-    for library in libraries:
-        logging.info(f"  Validating sites for {library}")
-        df_sites = df_sites.with_columns(
-            (pl.col(f"Uncon_{library}") / pl.col(f"Depth_{library}")).alias(
-                f"Ratio_{library}"
-            ),
-            pl.struct(f"Uncon_{library}", f"Depth_{library}", f"Background_{library}")
-            .map_batches(
-                lambda s, library=library: pl.Series(validate_site_vectorized(
-                    s.struct.field(f"Uncon_{library}").to_numpy(),
-                    s.struct.field(f"Depth_{library}").to_numpy(),
-                    s.struct.field(f"Background_{library}").to_numpy(),
-                )),
-                return_dtype=pl.Float64,
-            )
-            .alias(f"p_{library}"),
+    logging.info("Combining background statistics and validating sites in chunks")
+    chunk_size = 10_000_000
+    first_chunk = True
+    total_sites = len(df_sites)
+    
+    for offset in range(0, total_sites, chunk_size):
+        logging.info(f"  Processing chunk {offset // chunk_size + 1} / {(total_sites - 1) // chunk_size + 1}")
+        chunk = df_sites.slice(offset, chunk_size)
+        
+        chunk = chunk.select(pl.all().exclude("^Background_.*$")).join(
+            df_ft, on=["Motif3", "GC"], how="left"
         )
+        
+        for library in libraries:
+            chunk = chunk.with_columns(
+                (pl.col(f"Uncon_{library}") / pl.col(f"Depth_{library}")).alias(
+                    f"Ratio_{library}"
+                ),
+                pl.struct(f"Uncon_{library}", f"Depth_{library}", f"Background_{library}")
+                .map_batches(
+                    lambda s, library=library: pl.Series(validate_site_vectorized(
+                        s.struct.field(f"Uncon_{library}").to_numpy(),
+                        s.struct.field(f"Depth_{library}").to_numpy(),
+                        s.struct.field(f"Background_{library}").to_numpy(),
+                    )),
+                    return_dtype=pl.Float64,
+                )
+                .alias(f"p_{library}"),
+            )
+            
+        chunk_filtered = chunk.filter(pl.any_horizontal(pl.col("^p_.*$") < 1))
+        
+        with open(output_file, "ab" if not first_chunk else "wb") as f:
+            chunk_filtered.write_csv(
+                f,
+                separator="\t",
+                float_precision=8,
+                float_scientific=True,
+                include_header=first_chunk,
+            )
+        first_chunk = False
+        
+        import gc
+        del chunk
+        del chunk_filtered
+        gc.collect()
 
-    logging.info("Filtering and writing output file")
-    df_filtered = df_sites.filter(pl.any_horizontal(pl.col("^p_.*$") < 1))
-    df_filtered.write_csv(
-        output_file,
-        separator="\t",
-        float_precision=8,
-        float_scientific=True,
-        batch_size=4096,
-    )
+    logging.info("Filtering complete")
