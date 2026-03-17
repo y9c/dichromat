@@ -44,8 +44,7 @@ def main():
             logging.warning("No depth columns found in sites file.")
             return
 
-        # 1. MOTIF HEATMAP (If motif files provided)
-        # This part is already efficient as motif files are small.
+        # 1. MOTIF HEATMAP
         if args.motif_files:
             logging.info("Processing motif conversion files...")
             motif_dfs = []
@@ -62,28 +61,25 @@ def main():
             
             if motif_dfs:
                 df_motifs = pl.concat(motif_dfs)
-                # Group by motif and calculate weighted mean ratio
                 df_agg = df_motifs.group_by(["Motif", "reftype"]).agg([
                     (pl.col("Uncon").sum() / pl.col("Depth").sum()).alias("Ratio")
                 ])
                 
-                # Pivot for MultiQC heatmap
                 for reftype in ["transcript", "genome"]:
                     df_p = df_agg.filter(pl.col("reftype") == reftype).pivot(
                         on="Motif", index="reftype", values="Ratio"
-                    ).drop("reftype")
-                    out_path = args.transcript_table_output if reftype == "transcript" else args.genome_table_output
-                    df_p.write_csv(out_path, separator='\t')
+                    )
+                    if not df_p.is_empty():
+                        df_p = df_p.drop("reftype")
+                        out_path = args.transcript_table_output if reftype == "transcript" else args.genome_table_output
+                        df_p.write_csv(out_path, separator='\t')
 
-        # 2. GLOBAL STREAMING AGGREGATION (One Pass)
+        # 2. GLOBAL STREAMING AGGREGATION
         logging.info("Executing global streaming aggregation for Summary and Histograms...")
         
-        # We'll collect Summary Stats and Histogram bins in one single pass.
-        # Median is approximated using bins to save RAM.
         ratio_bins = np.linspace(0, 1, 51)
         depth_bins = np.logspace(0, 5, 51)
         
-        # Accmulator for Summary
         summary_exprs = []
         for lib in libraries:
             d_col = f"Depth_{lib}"
@@ -95,7 +91,6 @@ def main():
                 (pl.col(u_col).cast(pl.Float64) / pl.col(d_col).cast(pl.Float64)).max().alias(f"max_r_{lib}")
             ])
 
-        # Execute Summary Aggregation
         df_summary_raw = lf.select(summary_exprs).collect(engine="streaming")
         
         summary_rows = []
@@ -113,13 +108,11 @@ def main():
         if summary_rows:
             pl.DataFrame(summary_rows).write_csv(args.summary_output, separator='\t')
 
-        # 3. HISTOGRAMS (One pass per 4 samples to balance speed and RAM)
-        # Polars select().collect() is much faster than python-loop read_csv_batched
+        # 3. HISTOGRAMS
         logging.info("Generating histograms...")
         df_ratio_hist = pl.DataFrame({"Ratio": [f"{m:.2f}" for m in (ratio_bins[:-1] + ratio_bins[1:]) / 2]})
         df_depth_hist = pl.DataFrame({"Depth": [int(m) for m in (depth_bins[:-1] + depth_bins[1:]) / 2]})
 
-        # We process in small groups to avoid wider-than-RAM intermediate tables
         lib_groups = [libraries[i:i+4] for i in range(0, len(libraries), 4)]
         for group in lib_groups:
             logging.info(f"  Processing group: {group}")
@@ -127,7 +120,6 @@ def main():
             for lib in group:
                 group_cols.extend([f"Depth_{lib}", f"Uncon_{lib}"])
             
-            # Collect only required columns for this group
             df_group = lf.select(group_cols).collect(engine="streaming")
             
             for lib in group:
