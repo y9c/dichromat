@@ -92,7 +92,6 @@ PATH = SimpleNamespace(**config.get("path", {}))
 
 INTERNALDIR = Path("internal_files")
 BENCHDIR = Path(".snakemake/benchmarks")
-BENCHDIR = Path(".snakemake/benchmarks")
 MARKDUP = config.get("markdup", True)
 SPLICE_GENOME = config.get("splice_genome", True)
 SPLICE_CONTAM = config.get("splice_contamination", False)
@@ -1256,12 +1255,11 @@ rule merge_gene_and_genome_table:
         genome=INTERNALDIR / "pileup/genome.parquet",
     output:
         "report_sites/sites.tsv.gz",
-    threads: 16
+    threads: 32
     benchmark:
         BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
     resources:
-        runtime=720,
-        mem_mb=64000
+        runtime=720
     shell:
         """
         {PATH.remap_genome} -t {input.info} -a {input.transcripts} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
@@ -1335,7 +1333,10 @@ rule mqc_aggregate_site_stats:
             sample=SAMPLE2DATA.keys(),
             reftype=["transcript", "genome"],
         ),
-        sites_file="report_sites/sites.tsv.gz" if IS_ETAM else [],
+        sites_file=[
+            INTERNALDIR / "pileup/genome.parquet",
+            INTERNALDIR / "pileup/transcript.parquet",
+        ],
     output:
         motifs=INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
         site_sum=INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
@@ -1347,10 +1348,9 @@ rule mqc_aggregate_site_stats:
         target_base=config.get("base_change", "A,G").split(",")[0],
     benchmark:
         BENCHDIR / "mqc_aggregate_site_stats.benchmark.txt"
-    threads: 8
+    threads: 16
     resources:
-        runtime=240,
-        mem_mb=128000
+        runtime=720
     shell:
         """
         {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} {output.site_depth} {output.motif_transcript} {output.motif_genome} --motif-files {input.motifs} --sites-file {input.sites_file} --target-base {params.target_base}
