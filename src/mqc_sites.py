@@ -62,7 +62,7 @@ def main():
             if motif_dfs:
                 df_motifs = pl.concat(motif_dfs)
                 df_agg = df_motifs.group_by(["Motif", "reftype"]).agg([
-                    (pl.col("Uncon").sum() / pl.col("Depth").sum()).alias("Ratio")
+                    (pl.col("Unconverted").sum() / pl.col("Depth").sum()).alias("Ratio")
                 ])
                 
                 for reftype in ["transcript", "genome"]:
