@@ -118,28 +118,34 @@ jobs:
           BASE="https://zenodo.org/api/deposit/depositions"
           AUTH="Authorization: Bearer ${ZENODO_TOKEN}"
 
-          # 1. Create a new version draft (inherits previous files)
-          NEWVERSION=$(curl -sf -X POST -H "$AUTH" "$BASE/$ZENODO_DEPOSITION_ID/actions/newversion")
-          NEW_DRAFT_URL=$(echo "$NEWVERSION" | jq -r '.links.latest_draft')
-          DRAFT=$(curl -sf -H "$AUTH" "$NEW_DRAFT_URL")
-          NEW_ID=$(echo "$DRAFT" | jq -r '.id')
-          BUCKET=$(echo "$DRAFT" | jq -r '.links.bucket')
+          # Determine the current deposition state.
+          DEP=$(curl -sf -H "$AUTH" "$BASE/$ZENODO_DEPOSITION_ID")
 
-          # 2. Remove any previous dichromat.sif copied into the new draft
-          OLD_FILE_ID=$(echo "$DRAFT" | jq -r --arg f "dichromat.sif" '.files[]? | select(.filename==$f) | .id')
-          if [ -n "$OLD_FILE_ID" ] && [ "$OLD_FILE_ID" != "null" ]; then
-            curl -sf -X DELETE -H "$AUTH" "$BASE/$NEW_ID/files/$OLD_FILE_ID"
+          # If already published, re-open the SAME version for editing via
+          # 'actions/edit' (this does NOT create a new version, unlike
+          # 'actions/newversion', so no version numbers accumulate).
+          # If still a draft, we edit it directly.
+          PUBLISHED=$(echo "$DEP" | jq -r '.submitted // false')
+          if [ "$PUBLISHED" = "true" ]; then
+            EDIT=$(curl -sf -X POST -H "$AUTH" "$BASE/$ZENODO_DEPOSITION_ID/actions/edit")
+            EDIT_ID=$(echo "$EDIT" | jq -r '.id')
+          else
+            EDIT_ID=$ZENODO_DEPOSITION_ID
           fi
 
-          # 3. Upload the freshly built SIF
+          # Get the editable draft bucket for uploading.
+          DRAFT=$(curl -sf -H "$AUTH" "$BASE/$EDIT_ID")
+          BUCKET=$(echo "$DRAFT" | jq -r '.links.bucket')
+
+          # Remove any previous dichromat.sif from the editable draft.
+          OLD_FILE_ID=$(echo "$DRAFT" | jq -r --arg f "dichromat.sif" '.files[]? | select(.filename==$f) | .id')
+          if [ -n "$OLD_FILE_ID" ] && [ "$OLD_FILE_ID" != "null" ]; then
+            curl -sf -X DELETE -H "$AUTH" "$BASE/$EDIT_ID/files/$OLD_FILE_ID"
+          fi
+
+          # Upload the freshly built SIF.
           curl -sf -H "$AUTH" --upload-file "$SIF_FILE_PATH" "$BUCKET/dichromat.sif"
 
-          # 4. Update the version metadata
-          VERSION_STR="nightly-${VERSION}"
-          curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
-            -d "{\"metadata\":{\"version\":\"${VERSION_STR}\"}}" \
-            "$BASE/$NEW_ID"
-
-          # 5. Publish the new version
-          curl -sf -X POST -H "$AUTH" "$BASE/$NEW_ID/actions/publish"
-          echo "Published dichromat.sif (${VERSION_STR}) to Zenodo."
+          # Publish (republishes the SAME version when it was already published).
+          curl -sf -X POST -H "$AUTH" "$BASE/$EDIT_ID/actions/publish"
+          echo "Published dichromat.sif to Zenodo (same version, no accumulation)."

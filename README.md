@@ -25,7 +25,7 @@ To run this pipeline, you need the following installed on your host system:
 > ```
 > **Option 3 — Zenodo mirror (China-friendly):**
 > ```bash
-> wget -O dichromat.sif "https://zenodo.org/api/records/18859539/draft/files/dichromat.sif/content"
+> wget -O dichromat.sif "https://zenodo.org/api/records/18859539/files/dichromat.sif/content"
 > ```
 > Then run with any SIF:
 > ```bash
