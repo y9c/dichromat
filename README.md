@@ -34,7 +34,7 @@ To run this pipeline, you need the following installed on your host system:
 
 ### 2. Configure Your Run
 
-Create a `config.yaml` with your references and samples (set `container` to your SIF path):
+Create a `config.yaml` with your references and samples. If using Method A below, include the `container` path to your SIF:
 
 <details>
 <summary>▼ Click to see the example configuration</summary>
@@ -80,7 +80,11 @@ In this mode, Snakemake runs on your host and manages the container execution fo
 *   **Pros**: Full flexibility for cluster integration (Slurm, LSF, etc.) and better resource management.
 *   **Command**:
     ```bash
+    # Using the default config.yaml in the project directory:
     ./dichromat.sh --batch your_batch_name
+
+    # Or with a custom config:
+    ./dichromat.sh --batch your_batch_name --config /path/to/config.yaml
     ```
 
 #### Method B: Container-Controlled (Zero Setup)
@@ -98,7 +102,7 @@ In this mode, you run the container directly, which internally executes Snakemak
 
 ## 📁 Output Structure
 *   `report_reads/`: Mapping statistics and read-level QC dashboards.
-*   `report_sites/`: Site-level analysis, filtered sites (`filtered.tsv`), and motif dashboards.
+*   `report_sites/`: Site-level analysis and motif dashboards. Output is `sites.tsv.gz` (or `filtered.tsv` for eTAM mode).
 *   `internal_files/`: Intermediate alignments and statistical summaries.
 
 ---
