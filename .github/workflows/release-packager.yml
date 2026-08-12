@@ -85,3 +85,61 @@ jobs:
             - **Docker:** `ghcr.io/${{ github.repository_owner }}/dichromat:latest`
           prerelease: true
           files: ${{ env.SIF_FILE_PATH }}
+
+      # 9. (Optional) Auto-publish the SIF to Zenodo for China-friendly downloads.
+      #    Zenodo is generally accessible from mainland China (unlike GitHub).
+      #    Requires two repository secrets:
+      #      - ZENODO_TOKEN:        Zenodo personal access token (deposit:write + deposit:actions)
+      #      - ZENODO_DEPOSITION_ID: the Zenodo deposition ID of the dichromat record
+      #    If either secret is missing the step skips cleanly (no-op), so the
+      #    workflow remains usable by forks/contributors without the secrets.
+      - name: Check Zenodo configuration
+        id: zenodo_guard
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          ZENODO_DEPOSITION_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
+        run: |
+          if [ -z "$ZENODO_TOKEN" ] || [ -z "$ZENODO_DEPOSITION_ID" ]; then
+            echo "Zenodo not configured (missing ZENODO_TOKEN / ZENODO_DEPOSITION_ID secrets). Skipping Zenodo publish."
+            echo "configured=false" >> "$GITHUB_ENV"
+          else
+            echo "configured=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish SIF to Zenodo
+        if: env.configured == 'true'
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          ZENODO_DEPOSITION_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
+          SIF_FILE_PATH: ${{ env.SIF_FILE_PATH }}
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          BASE="https://zenodo.org/api/deposit/depositions"
+          AUTH="Authorization: Bearer ${ZENODO_TOKEN}"
+
+          # 1. Create a new version draft (inherits previous files)
+          NEWVERSION=$(curl -sf -X POST -H "$AUTH" "$BASE/$ZENODO_DEPOSITION_ID/actions/newversion")
+          NEW_DRAFT_URL=$(echo "$NEWVERSION" | jq -r '.links.latest_draft')
+          DRAFT=$(curl -sf -H "$AUTH" "$NEW_DRAFT_URL")
+          NEW_ID=$(echo "$DRAFT" | jq -r '.id')
+          BUCKET=$(echo "$DRAFT" | jq -r '.links.bucket')
+
+          # 2. Remove any previous dichromat.sif copied into the new draft
+          OLD_FILE_ID=$(echo "$DRAFT" | jq -r --arg f "dichromat.sif" '.files[]? | select(.filename==$f) | .id')
+          if [ -n "$OLD_FILE_ID" ] && [ "$OLD_FILE_ID" != "null" ]; then
+            curl -sf -X DELETE -H "$AUTH" "$BASE/$NEW_ID/files/$OLD_FILE_ID"
+          fi
+
+          # 3. Upload the freshly built SIF
+          curl -sf -H "$AUTH" --upload-file "$SIF_FILE_PATH" "$BUCKET/dichromat.sif"
+
+          # 4. Update the version metadata
+          VERSION_STR="nightly-${VERSION}"
+          curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+            -d "{\"metadata\":{\"version\":\"${VERSION_STR}\"}}" \
+            "$BASE/$NEW_ID"
+
+          # 5. Publish the new version
+          curl -sf -X POST -H "$AUTH" "$BASE/$NEW_ID/actions/publish"
+          echo "Published dichromat.sif (${VERSION_STR}) to Zenodo."
