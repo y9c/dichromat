@@ -15,20 +15,20 @@ To run this pipeline, you need the following installed on your host system:
 ### 1. Get the Container
 
 > [!TIP]
-> Compile the pipeline first, or download a pre-built SIF — either way, run it the same way:
->
+> **Option 1 — Build from GHCR:**
 > ```bash
-> # Option 1: compile from the GitHub Container Registry
 > apptainer build dichromat.sif docker://ghcr.io/y9c/dichromat:latest
->
-> # Option 2: or download the pre-built SIF directly
-> # wget https://github.com/y9c/dichromat/releases/download/nightly-build/dichromat.sif
->
-> # run
+> ```
+> **Option 2 — Download the nightly SIF directly:**
+> ```bash
+> wget https://github.com/y9c/dichromat/releases/download/nightly-build/dichromat.sif
+> ```
+> Then run with either:
+> ```bash
 > apptainer run -B /data dichromat.sif -c config.yaml -j 48
 > ```
 
-<sub>*If you have networking issues reaching GitHub Container Registry (especially in China), download the pre-built SIF from Zenodo:*</sub>
+If you have networking issues (e.g. in China), Zenodo is an alternative:
 ```bash
 wget -O dichromat.sif "https://zenodo.org/api/records/18859539/draft/files/dichromat.sif/content"
 ```
