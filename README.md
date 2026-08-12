@@ -19,19 +19,18 @@ To run this pipeline, you need the following installed on your host system:
 > ```bash
 > apptainer build dichromat.sif docker://ghcr.io/y9c/dichromat:latest
 > ```
-> **Option 2 — Download the nightly SIF directly:**
+> **Option 2 — Download the nightly SIF:**
 > ```bash
 > wget https://github.com/y9c/dichromat/releases/download/nightly-build/dichromat.sif
 > ```
-> Then run with either:
+> **Option 3 — Zenodo mirror (China-friendly):**
+> ```bash
+> wget -O dichromat.sif "https://zenodo.org/api/records/18859539/draft/files/dichromat.sif/content"
+> ```
+> Then run with any SIF:
 > ```bash
 > apptainer run -B /data dichromat.sif -c config.yaml -j 48
 > ```
-
-If you have networking issues (e.g. in China), Zenodo is an alternative:
-```bash
-wget -O dichromat.sif "https://zenodo.org/api/records/18859539/draft/files/dichromat.sif/content"
-```
 
 ### 2. Configure Your Run
 
