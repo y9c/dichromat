@@ -72,3 +72,68 @@ jobs:
             Snakefile
             default.yaml
             config.yaml
+
+      - name: Install Apptainer
+        uses: eWaterCycle/setup-apptainer@v2
+        with:
+          apptainer-version: 1.3.6
+
+      # Build a SIF from the just-published Docker image for archiving on Zenodo.
+      - name: Build SIF for Zenodo
+        env:
+          APPTAINER_DOCKER_USERNAME: ${{ github.actor }}
+          APPTAINER_DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          DOCKER_IMAGE_URI: docker://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
+        run: |
+          apptainer build dichromat.sif "$DOCKER_IMAGE_URI"
+          echo "SIF_FILE_PATH=dichromat.sif" >> $GITHUB_ENV
+
+      # Publish the SIF as a new Zenodo version (only on release tags).
+      # newversion is used because the Zenodo deposit API locks the file
+      # bucket on edits of a published version; a new version's bucket is
+      # writable. Each release tag therefore adds one Zenodo version.
+      - name: Check Zenodo configuration
+        id: zenodo_guard
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          ZENODO_DEPOSITION_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
+        run: |
+          if [ -z "$ZENODO_TOKEN" ] || [ -z "$ZENODO_DEPOSITION_ID" ]; then
+            echo "Zenodo not configured (missing secrets). Skipping."
+            echo "configured=false" >> "$GITHUB_ENV"
+          else
+            echo "configured=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish SIF to Zenodo
+        if: env.configured == 'true'
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          ZENODO_DEPOSITION_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
+          SIF_FILE_PATH: ${{ env.SIF_FILE_PATH }}
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          BASE="https://zenodo.org/api/deposit/depositions"
+          AUTH="Authorization: Bearer ${ZENODO_TOKEN}"
+
+          # Create a new version draft (gives a writable bucket).
+          NV=$(curl -sf -X POST -H "$AUTH" "$BASE/$ZENODO_DEPOSITION_ID/actions/newversion")
+          NEW_ID=$(echo "$NV" | jq -r '.id')
+          BUCKET=$(echo "$NV" | jq -r '.links.bucket')
+
+          # Remove the SIF inherited from the previous version, then upload the new one.
+          OLD_FILE_ID=$(echo "$NV" | jq -r --arg f "dichromat.sif" '.files[]? | select(.filename==$f) | .id')
+          if [ -n "$OLD_FILE_ID" ] && [ "$OLD_FILE_ID" != "null" ]; then
+            curl -sf -X DELETE -H "$AUTH" "$BASE/$NEW_ID/files/$OLD_FILE_ID"
+          fi
+          curl -sf -H "$AUTH" --upload-file "$SIF_FILE_PATH" "$BUCKET/dichromat.sif"
+
+          # Set the version metadata to the release version.
+          curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+            -d "{\"metadata\":{\"version\":\"${RELEASE_VERSION}\"}}" \
+            "$BASE/$NEW_ID"
+
+          # Publish the new version.
+          curl -sf -X POST -H "$AUTH" "$BASE/$NEW_ID/actions/publish"
+          echo "Published dichromat.sif v${RELEASE_VERSION} to Zenodo."
