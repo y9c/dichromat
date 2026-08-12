@@ -45,7 +45,7 @@ RUN uv tool install multiqc==1.33 --no-cache && \
 
 # --- Build samtools/bgzip ---
 WORKDIR /build/sources
-RUN curl -L --http1.1 --retry 5 https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 -o samtools.tar.bz2 && \
+RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 -o samtools.tar.bz2 && \
     tar -xjvf samtools.tar.bz2 --strip-components 1 && \
     ./configure --without-curses && \
     make -j$(nproc) samtools && \
@@ -53,7 +53,7 @@ RUN curl -L --http1.1 --retry 5 https://github.com/samtools/samtools/releases/do
     mv samtools /usr/local/bin/ && \
     rm -rf *
 
-RUN curl -L --http1.1 --retry 5 https://github.com/samtools/htslib/releases/download/${SAMTOOLS_VERSION}/htslib-${SAMTOOLS_VERSION}.tar.bz2 -o htslib.tar.bz2 && \
+RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 https://github.com/samtools/htslib/releases/download/${SAMTOOLS_VERSION}/htslib-${SAMTOOLS_VERSION}.tar.bz2 -o htslib.tar.bz2 && \
     tar -xjvf htslib.tar.bz2 --strip-components 1 && \
     ./configure && \
     make -j$(nproc) bgzip && \
@@ -63,7 +63,7 @@ RUN curl -L --http1.1 --retry 5 https://github.com/samtools/htslib/releases/down
 
 # --- Build hisat3n from GitHub release (v0.1.23) ---
 WORKDIR /build/hisat2
-RUN curl -L https://github.com/y9c/hisat2/archive/refs/tags/v0.1.23.tar.gz -o hisat2.tar.gz && \
+RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 https://github.com/y9c/hisat2/archive/refs/tags/v0.1.23.tar.gz -o hisat2.tar.gz && \
     tar -xzvf hisat2.tar.gz --strip-components 1 && \
     make -j$(nproc) hisat2-align-s hisat2-build-s hisat2-inspect-s EXTRA_FLAGS="-static-libstdc++ -static-libgcc -mavx2" && \
     g++ -O3 -o hisat3n hisat2_wrapper.cpp -static-libstdc++ -static-libgcc && \
@@ -74,7 +74,7 @@ RUN curl -L https://github.com/y9c/hisat2/archive/refs/tags/v0.1.23.tar.gz -o hi
 
 # --- Build Falco ---
 WORKDIR /build/falco
-RUN curl -L https://github.com/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}.tar.gz -o falco.tar.gz && \
+RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 https://github.com/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}.tar.gz -o falco.tar.gz && \
     tar -xzvf falco.tar.gz && cd falco-* && ./configure && make -j$(nproc) && strip falco && \
     mv falco /usr/local/bin/ && cd .. && rm -rf /build/falco
 
