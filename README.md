@@ -14,14 +14,22 @@ To run this pipeline, you need the following installed on your host system:
 
 ### 1. Get the Container
 
-**Option A: Build from GitHub Container Registry (recommended):**
-```bash
-apptainer build dichromat.sif docker://ghcr.io/y9c/dichromat:latest
-```
+> [!TIP]
+> If you work on a remote server with internet access, you can compile the pipeline first
+>
+> ```bash
+> apptainer build dichromat.sif docker://ghcr.io/y9c/dichromat:latest
+> apptainer run dichromat.sif -c config.yaml -j 48
+> ```
+>
+> Or you can download the pre-built SIF directly for running
+>
+> ```bash
+> wget https://github.com/y9c/dichromat/releases/download/nightly-build/dichromat.sif
+> apptainer run dichromat.sif -c config.yaml -j 48
+> ```
 
-**Option B: Download pre-built SIF from Zenodo:**
-
-<sub>*If you have networking issues accessing Docker Hub (especially in China), download the pre-built SIF directly:*</sub>
+<sub>*If you have networking issues reaching GitHub Container Registry (especially in China), download the pre-built SIF from Zenodo:*</sub>
 ```bash
 wget -O dichromat.sif "https://zenodo.org/api/records/18859539/draft/files/dichromat.sif/content"
 ```
@@ -82,7 +90,7 @@ In this mode, you run the container directly, which internally executes Snakemak
 *   **Pros**: Portable and requires zero host-side configuration (except Apptainer).
 *   **Command**:
     ```bash
-    apptainer run -B /data dichromat.sif -c config.yaml
+    apptainer run -B /data dichromat.sif -c config.yaml -j 48
     ```
     *(Note: Ensure you bind-mount your data folders using the `-B` flag as shown.)*
 
