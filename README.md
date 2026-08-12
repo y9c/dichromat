@@ -27,15 +27,17 @@ To run this pipeline, you need the following installed on your host system:
 > ```bash
 > wget -O dichromat.sif "https://zenodo.org/api/records/18859539/files/dichromat.sif/content"
 > ```
+>
+> Of the two `wget` options:
+> - **Option 2 (GitHub nightly-build)** reflects every push to `main`. Always the freshest development build.
+> - **Option 3 (Zenodo)** is updated **only when a release tag (`v*`) is pushed**, and each tag creates a new Zenodo version (v1, v2, ...). It is the **stable-release** source; use Option 2 for the latest development build.
+>
 > Then run with any SIF:
 > ```bash
 > apptainer run -B /data dichromat.sif -c config.yaml -j 48
 > ```
 >
-> **How each image is updated:**
-> - **Option 1 (GHCR `latest`)** reflects the most recent build pushed to the registry, typically the latest `main` push.
-> - **Option 2 (GitHub nightly-build)** reflects every push to `main`. Always the freshest development build.
-> - **Option 3 (Zenodo)** is updated **only when a release tag (`v*`) is pushed**, and each tag creates a new Zenodo version (v1, v2, ...). It is the **stable-release** source; use Option 2 for the latest development build.
+> (Option 1, GHCR `latest`, reflects the most recent build pushed to the registry, typically the latest `main` push.)
 
 ### 2. Configure Your Run
 
