@@ -1307,7 +1307,12 @@ rule mqc_aggregate_mapping_stats:
         dedup_logs=expand(
             INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
             sample=SAMPLE2DATA.keys(),
-            reftype=["genome", "transcript", "genes", "contamination"],
+            reftype=[
+                r
+                for r in ["genome", "transcript", "genes", "contamination"]
+                if (r != "genes" or HAS_GENES)
+                and (r != "contamination" or HAS_CONTAM)
+            ],
         ),
         trim_jsons=expand(
             INTERNALDIR / "qc/trimming/{sample}_{rn}_mqc.tsv",
@@ -1365,7 +1370,9 @@ rule generate_mapping_report:
             INTERNALDIR / "stats/premap/{sample}_{rn}.summary",
             sample=SAMPLE2DATA.keys(),
             rn=["run1"],
-        ),
+        )
+        if HAS_CONTAM
+        else [],
         expand(
             INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
             sample=SAMPLE2DATA.keys(),
