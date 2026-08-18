@@ -3,17 +3,42 @@ ARG SAMTOOLS_VERSION="1.23"
 ARG FALCO_VERSION="1.2.3"
 ARG PYTHON_VERSION_FOR_APP="3.13"
 
+# -------- Mirror toggles (China vs rest of world) --------
+# PyPI index for uv.
+#   China:        --build-arg UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+#   Rest of world (default): official PyPI
+ARG UV_DEFAULT_INDEX="https://pypi.org/simple"
+
+# APT mirror. Empty string uses the official Debian sources.
+#   China:        --build-arg APT_MIRROR=mirrors.aliyun.com
+#   Rest of world (default): (empty) official Debian
+ARG APT_MIRROR=""
+
+# Base URL prefix for GitHub source downloads. Useful for GitHub mirrors/proxies.
+#   China example (GitHub proxy): --build-arg GH_BASEURL=https://ghproxy.com/
+#   Rest of world (default):      direct github.com
+ARG GH_BASEURL="https://github.com"
+
 # ----------- Builder Stage (Heavy) -----------
 FROM python:3.13-slim-bookworm AS builder
 
 ARG SAMTOOLS_VERSION
 ARG FALCO_VERSION
 ARG PYTHON_VERSION_FOR_APP
+ARG UV_DEFAULT_INDEX
+ARG APT_MIRROR
+ARG GH_BASEURL
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# PyPI index for uv (build environment)
+ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX}
+
 # Install build dependencies
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+# Configure APT mirror conditionally (leave official if APT_MIRROR empty)
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
     apt-get update && \
     apt-get -y --no-install-recommends install \
     ca-certificates wget curl bzip2 unzip make gcc g++ pkg-config \
@@ -45,7 +70,7 @@ RUN uv tool install multiqc==1.33 --no-cache && \
 
 # --- Build samtools/bgzip ---
 WORKDIR /build/sources
-RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 -o samtools.tar.bz2 && \
+RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 -o samtools.tar.bz2 && \
     tar -xjvf samtools.tar.bz2 --strip-components 1 && \
     ./configure --without-curses && \
     make -j$(nproc) samtools && \
@@ -53,7 +78,7 @@ RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 https://githu
     mv samtools /usr/local/bin/ && \
     rm -rf *
 
-RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 https://github.com/samtools/htslib/releases/download/${SAMTOOLS_VERSION}/htslib-${SAMTOOLS_VERSION}.tar.bz2 -o htslib.tar.bz2 && \
+RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/samtools/htslib/releases/download/${SAMTOOLS_VERSION}/htslib-${SAMTOOLS_VERSION}.tar.bz2 -o htslib.tar.bz2 && \
     tar -xjvf htslib.tar.bz2 --strip-components 1 && \
     ./configure && \
     make -j$(nproc) bgzip && \
@@ -63,7 +88,7 @@ RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 https://githu
 
 # --- Build hisat3n from GitHub release (v0.1.23) ---
 WORKDIR /build/hisat2
-RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 https://github.com/y9c/hisat2/archive/refs/tags/v0.1.23.tar.gz -o hisat2.tar.gz && \
+RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/y9c/hisat2/archive/refs/tags/v0.1.23.tar.gz -o hisat2.tar.gz && \
     tar -xzvf hisat2.tar.gz --strip-components 1 && \
     make -j$(nproc) hisat2-align-s hisat2-build-s hisat2-inspect-s EXTRA_FLAGS="-static-libstdc++ -static-libgcc -mavx2" && \
     g++ -O3 -o hisat3n hisat2_wrapper.cpp -static-libstdc++ -static-libgcc && \
@@ -74,7 +99,7 @@ RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 https://github.com/y9c/
 
 # --- Build Falco ---
 WORKDIR /build/falco
-RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 https://github.com/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}.tar.gz -o falco.tar.gz && \
+RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}.tar.gz -o falco.tar.gz && \
     tar -xzvf falco.tar.gz && cd falco-* && ./configure && make -j$(nproc) && strip falco && \
     mv falco /usr/local/bin/ && cd .. && rm -rf /build/falco
 
@@ -92,7 +117,10 @@ ENV APP_VENV_PATH=/opt/app_venv
 ENV UV_TOOL_DIR=/opt/uv_tools
 ENV PATH="${APP_VENV_PATH}/bin:/usr/local/bin:$PATH"
 
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+ARG APT_MIRROR
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
     apt-get update && \
     apt-get -y --no-install-recommends install \
     ca-certificates zlib1g libxml2 libbz2-1.0 liblzma5 pigz && \
