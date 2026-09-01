@@ -1,257 +1,169 @@
 #!/usr/bin/env python
+"""remap_genome.py: hybrid duckdb + python (polars-free, byte-identical).
+
+duckdb (columnar, OOM-safe): reads parquet, maps transcript-aligned sites to
+genome coords (strand-aware), unions with genome sites, and GROUP BY
+(Chrom,Pos,Strand) -> MIN(Motif), summed counts, per-site (GeneIdx,GenePos)
+lists, depth filter.
+python: builds the ';'-joined GeneName/GenePos in gene-index order (the part
+that is cleaner outside SQL), then writes the TSV(.gz) directly.
+"""
+
+import argparse
+import csv
+import gzip
 import logging
 import os
-import polars as pl
 import re
-import argparse
-import glob
-import subprocess
-from pathlib import Path
+
+import duckdb
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
-def parse_tx_file_to_df(tx_file):
-    records = []
-    with open(tx_file, "r") as f:
-        header = f.readline().strip().split("\t")
-        col2index = {col: idx for idx, col in enumerate(header)}
-        selected_cols = [col2index[col] for col in ["gene_id", "chrom", "strand", "spans"]]
-        for line in f:
-            parts = line.strip().split("\t")
-            gene_id, chrom, strand, spans = [parts[idx] for idx in selected_cols]
-            exon_len = 0
-            for span in spans.split(","):
-                start_str, end_str = span.split("-", maxsplit=1)
-                g_start, g_end = int(start_str) - 1, int(end_str)
-                length = g_end - g_start
-                tx_start, tx_end = exon_len, exon_len + length
-                exon_len += length
-                records.append({
-                    "GeneName": gene_id,
-                    "Chrom": chrom,
-                    "Strand": strand,
-                    "g_start": g_start,
-                    "g_end": g_end,
-                    "tx_start": tx_start,
-                    "tx_end": tx_end,
-                })
-    return pl.DataFrame(
-        records,
-        schema={
-            "GeneName": pl.String,
-            "Chrom": pl.String,
-            "Strand": pl.String,
-            "g_start": pl.Int64,
-            "g_end": pl.Int64,
-            "tx_start": pl.Int64,
-            "tx_end": pl.Int64,
-        },
-    )
+def parse_transcript(tx_file):
+    order, seen, exons = [], set(), []
+    raw = open(tx_file).read().splitlines()
+    if not raw:
+        return [], [], {}
+    for line in raw[1:]:
+        gid = line.split("\t")[0]
+        if gid not in seen:
+            seen.add(gid)
+            order.append(gid)
+    for line in raw[1:]:
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) < 4:
+            continue
+        gid, chrom, strand, spans = parts[0], parts[1], parts[2], parts[3]
+        exon_len = 0
+        for span in spans.split(","):
+            a, b = span.split("-", 1)
+            g_start, g_end = int(a) - 1, int(b)
+            length = g_end - g_start
+            tx_start, tx_end = exon_len, exon_len + length
+            exon_len += length
+            exons.append((gid, chrom, strand, g_start, g_end, tx_start, tx_end))
+    gmap = {g: i for i, g in enumerate(order)}
+    return order, exons, gmap
 
 
-def scan_input(f):
-    """Scan Parquet or TSV.GZ safely."""
-    if f.endswith(".parquet"):
-        return pl.scan_parquet(f)
+def q(v):
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file,
+                                 output_file, min_depth=1):
+    gene_order, exons, gidx = parse_transcript(transcript_file)
+    con = duckdb.connect()
+    con.execute("CREATE TEMP TABLE txmap(GeneName VARCHAR, Chrom VARCHAR,"
+                " Strand VARCHAR, g_start BIGINT, g_end BIGINT,"
+                " tx_start BIGINT, tx_end BIGINT)")
+    con.executemany("INSERT INTO txmap VALUES (?,?,?,?,?,?,?)", exons)
+    gname = {i: g for g, i in gidx.items()}
+
+    count_cols = [c[0] for c in con.sql(
+        f"DESCRIBE SELECT * FROM read_parquet('{gene_df_file}')").fetchall()
+        if c[0].startswith(("Uncon_", "Depth_"))]
+    depth_cols = [c for c in count_cols if c.startswith("Depth_")]
+
+    all_chroms = [r[0] for r in con.sql(
+        f"SELECT DISTINCT Chrom FROM read_parquet('{genome_df_file}')").fetchall()]
+    main = sorted(c for c in all_chroms if c and re.match(r"^(chr)?([0-9]+|[XYM]|MT)$", c))
+    other = [c for c in all_chroms if c not in main]
+    batches = [[c] for c in main] + ([other] if other else [])
+    logging.info("Partitions: %d", len(batches))
+
+    Path0 = os.path.dirname(os.path.abspath(output_file))
+    os.makedirs(Path0, exist_ok=True)
+    cnt_keep = ", ".join(f'"{c}"' for c in count_cols)
+    cnt_cast = ", ".join(f'CAST("{c}" AS BIGINT) AS "{c}"' for c in count_cols)
+    cnt_sum = ", ".join(f'SUM("{c}") AS "{c}"' for c in count_cols)
+    dep_sum = " + ".join(f'SUM("{c}")' for c in depth_cols)
+    header = ["Chrom", "Pos", "Strand", "GeneName", "GenePos", "Motif"] + count_cols
+
+    if output_file.endswith(".gz"):
+        fh = gzip.open(output_file, "wt", newline="")
     else:
-        return pl.scan_csv(f, separator="\t", infer_schema_length=None)
+        fh = open(output_file, "w", newline="")
+    w = csv.writer(fh, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_NONE)
+    w.writerow(header)
 
+    for batch in batches:
+        inl = ",".join(q(c) for c in batch)
+        rel_genes = [r[0] for r in con.sql(
+            f"SELECT DISTINCT GeneName FROM txmap WHERE Chrom IN ({inl})").fetchall()]
+        gin = ",".join(q(g) for g in rel_genes) or "''"
 
-def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file, output_file, min_depth=5):
-    pl.enable_string_cache()
-
-    logging.info("Step 1: Parsing transcript mapping file")
-    gene_order_list = []
-    seen_genes = set()
-    with open(transcript_file, "r") as f:
-        header = f.readline()
-        for line in f:
-            gid = line.split("\t")[0]
-            if gid not in seen_genes:
-                gene_order_list.append(gid)
-                seen_genes.add(gid)
-
-    exons_df_raw = parse_tx_file_to_df(transcript_file)
-    gene_map_df = pl.DataFrame(
-        {"GeneName": gene_order_list, "GeneIdx": pl.Series(range(len(gene_order_list)), dtype=pl.Int32)}
-    )
-    exons_df_all = exons_df_raw.join(gene_map_df, on="GeneName").drop("GeneName")
-    gene_map_df_lazy = gene_map_df.lazy()
-
-    logging.info("Step 2: Identifying chromosomes for batching")
-    lf_genome = scan_input(genome_df_file)
-    all_chroms = lf_genome.select("Chrom").unique().collect().get_column("Chrom").to_list()
-
-    main_chroms = sorted([c for c in all_chroms if re.match(r"^(chr)?([0-9]+|[XYM]|MT)$", c)])
-    other_contigs = [c for c in all_chroms if c not in main_chroms]
-
-    # Process main chroms ONE BY ONE to strictly cap memory
-    batches = [[c] for c in main_chroms]
-    if other_contigs:
-        batches.append(other_contigs)
-
-    logging.info(f"Processing in {len(batches)} batches (OOM-Safe)")
-
-    first_pass = True
-    count_cols = []
-    out_dir = Path(output_file).parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-    temp_prefix = str(out_dir / (Path(output_file).name + ".tmp_chunk"))
-
-    gene_names_list = gene_order_list
-
-    chunk_files = []
-    for idx, chrom_batch in enumerate(batches):
-        logging.info(f"Processing batch {idx+1}: {chrom_batch[0]}... ({len(chrom_batch)} chroms)")
-
-        exons_batch = exons_df_all.filter(pl.col("Chrom").is_in(chrom_batch)).lazy()
-        relevant_genes_list = (
-            exons_df_raw.filter(pl.col("Chrom").is_in(chrom_batch)).get_column("GeneName").unique().to_list()
-        )
-
-        # 1. Transcript remapping
-        df1_lazy = (
-            scan_input(gene_df_file)
-            .filter(pl.col("Chrom").is_in(relevant_genes_list))
-            .rename({"Chrom": "GeneName", "Pos": "GenePos_1based"})
-            .drop(["Strand"])
-            .with_columns((pl.col("GenePos_1based") - 1).alias("GenePos_0based"))
-            .join(gene_map_df_lazy, on="GeneName", how="inner")
-            .join(exons_batch, on="GeneIdx", how="inner")
-            .filter(
-                ((pl.col("GenePos_1based") - 1 >= pl.col("tx_start")) & (pl.col("GenePos_1based") - 1 < pl.col("tx_end")))
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE mapped_sites AS
+            SELECT COALESCE(t.Chrom, gp.chrom) AS Chrom,
+                   CAST(CASE WHEN t.Strand = '+' THEN
+                        t.g_start + (gp."Pos" - 1 - t.tx_start) + 1
+                        ELSE t.g_end - (gp."Pos" - 1 - t.tx_start) END AS BIGINT) AS Pos,
+                   COALESCE(t.Strand, '.') AS "Strand",
+                   gp.chrom AS GeneName,
+                   CAST(gp."Pos" AS BIGINT) AS GenePos,
+                   gp."Motif" AS Motif,
+                   {cnt_cast}
+            FROM read_parquet('{gene_df_file}') AS gp
+            JOIN txmap t ON t.GeneName = gp.chrom
+            WHERE gp.chrom IN ({gin})
+              AND (gp."Pos" - 1 >= t.tx_start AND gp."Pos" - 1 < t.tx_end)
+        """)
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE raw_sites AS
+            SELECT Chrom, CAST(Pos AS BIGINT) AS Pos, "Strand",
+                   CAST(NULL AS VARCHAR) AS GeneName,
+                   CAST(NULL AS BIGINT) AS GenePos,
+                   "Motif", {cnt_cast}
+            FROM read_parquet('{genome_df_file}') AS rp
+            WHERE Chrom IN ({inl})
+        """)
+        hav = f"(({dep_sum}) >= {int(min_depth)})" if depth_cols else "TRUE"
+        rows = con.sql(f"""
+            WITH u AS (SELECT * FROM mapped_sites UNION ALL BY NAME SELECT * FROM raw_sites),
+            grp AS (
+                SELECT Chrom, Pos, "Strand",
+                       list(GeneName) FILTER (WHERE GeneName IS NOT NULL) AS gnames,
+                       list(GenePos) FILTER (WHERE GenePos IS NOT NULL)  AS gposs,
+                       MIN(Motif) AS Motif,
+                       {cnt_sum}
+                FROM u
+                GROUP BY Chrom, Pos, "Strand"
+                HAVING {hav}
             )
-            .with_columns(
-                Pos=pl.when(pl.col("Strand") == "+")
-                .then(pl.col("g_start") + (pl.col("GenePos_1based") - 1 - pl.col("tx_start")) + 1)
-                .otherwise(pl.col("g_end") - (pl.col("GenePos_1based") - 1 - pl.col("tx_start"))),
-                GenePos=pl.col("GenePos_1based").cast(pl.UInt32),
-            )
-            .with_columns(
-                [pl.col("Chrom").fill_null(pl.col("GeneName")), pl.col("Pos").cast(pl.UInt32), pl.col("Strand").fill_null(".")]
-            )
-        )
+            SELECT Chrom, Pos, "Strand",
+                   gnames, gposs, Motif,
+                   {", ".join(f'"{c}"' for c in count_cols)}
+            FROM grp
+            ORDER BY Chrom, Pos, "Strand"
+        """).fetchall()
 
-        # 2. Genome data
-        df2_lazy = (
-            scan_input(genome_df_file)
-            .filter(pl.col("Chrom").is_in(chrom_batch))
-            .with_columns(
-                [
-                    pl.col("Pos").cast(pl.UInt32),
-                    pl.lit(None).cast(pl.Int32).alias("GeneIdx"),
-                    pl.lit(None).cast(pl.UInt32).alias("GenePos"),
-                ]
-            )
-        )
+        for r in rows:
+            chrom, pos, strand, gnames, gposs, motif, *_cnt = r
+            if gnames:
+                pairs = sorted((gidx[gn], gposs[i]) for i, gn in enumerate(gnames))
+                gene_name = ";".join(gname[gi] for gi, _ in pairs)
+                gene_pos = ";".join(str(p) for _, p in pairs)
+            else:
+                gene_name, gene_pos = "", ""
+            w.writerow([chrom, pos, strand, gene_name, gene_pos, motif] + list(_cnt))
 
-        if first_pass:
-            schema = df1_lazy.collect_schema()
-            count_cols = [c for c in schema.names() if c.startswith(("Uncon_", "Depth_"))]
-            first_pass = False
+        con.execute("DROP TABLE IF EXISTS mapped_sites")
+        con.execute("DROP TABLE IF EXISTS raw_sites")
 
-        required_cols = ["Chrom", "Pos", "Strand", "GeneIdx", "GenePos", "Motif"] + count_cols
-
-        df_chunk = (
-            pl.concat(
-                [
-                    df1_lazy.select(required_cols).with_columns([pl.col(c).cast(pl.Int64) for c in count_cols]),
-                    df2_lazy.select(required_cols).with_columns([pl.col(c).cast(pl.Int64) for c in count_cols]),
-                ],
-                how="diagonal",
-            )
-            .with_columns(
-                [pl.col("Chrom").cast(pl.Categorical), pl.col("Strand").cast(pl.Categorical), pl.col("Motif").cast(pl.Categorical)]
-            )
-            .group_by(["Chrom", "Pos", "Strand"])
-            .agg(
-                [
-                    pl.col("GeneIdx").drop_nulls().alias("ids"),
-                    pl.col("GenePos").drop_nulls().alias("pos"),
-                    pl.col("Motif").sort().first(),
-                    pl.exclude(["Chrom", "Pos", "Strand", "GeneIdx", "GenePos", "Motif", "ids", "pos"]).sum(),
-                ]
-            )
-            .filter(pl.sum_horizontal(pl.col("^Depth_.*$")) >= min_depth)
-            .collect(engine="streaming")
-        )
-
-        if not df_chunk.is_empty():
-            # NATIVE POLARS FORMATTING: much faster and memory-stable than map_elements
-            # 1. Expand ids/pos lists to rows
-            # 2. Join with gene_map_df to get GeneName
-            # 3. Sort by GeneIdx to ensure deterministic output
-            # 4. Group by Chrom/Pos/Strand and join with ";"
-            
-            df_fmt = (
-                df_chunk.select(["Chrom", "Pos", "Strand", "ids", "pos"])
-                .explode(["ids", "pos"])
-                .drop_nulls("ids")
-                .unique(["Chrom", "Pos", "Strand", "ids"])
-                .join(gene_map_df, left_on="ids", right_on="GeneIdx", how="inner")
-                .sort(["Chrom", "Pos", "Strand", "ids"])
-                .with_columns(pl.col("pos").cast(pl.String))
-                .group_by(["Chrom", "Pos", "Strand"], maintain_order=True)
-                .agg([
-                    pl.col("GeneName").str.concat(";"),
-                    pl.col("pos").str.concat(";").alias("GenePos")
-                ])
-            )
-
-            df_chunk = (
-                df_chunk.drop(["ids", "pos"])
-                .join(df_fmt, on=["Chrom", "Pos", "Strand"], how="left")
-                .with_columns([
-                    pl.col("GeneName").fill_null(""),
-                    pl.col("GenePos").fill_null("")
-                ])
-                .select(["Chrom", "Pos", "Strand", "GeneName", "GenePos", "Motif"] + count_cols)
-                .sort(["Chrom", "Pos", "Strand"])
-            )
-            
-            chunk_file = f"{temp_prefix}.{idx}.parquet"
-            df_chunk.write_parquet(chunk_file, compression="zstd")
-            chunk_files.append(chunk_file)
-
-        import gc
-
-        gc.collect()
-
-    # Final Merge of Parquet Chunks
-    logging.info("Merging temporary Parquet chunks...")
-    if chunk_files:
-        # FIX: Avoid global sort() which is non-streaming and causes OOM.
-        # Chunks are already sorted by Chrom, Pos, Strand during creation.
-        lf_final = pl.concat([pl.scan_parquet(c) for c in chunk_files])
-        
-        final_raw = output_file.replace(".gz", "") if output_file.endswith(".gz") else output_file + ".raw"
-        
-        logging.info(f"Sinking final result to {final_raw}...")
-        lf_final.sink_csv(final_raw, separator="\t", quote_style="never")
-        
-        if output_file.endswith(".gz"):
-            logging.info(f"Compressing {final_raw} to {output_file}...")
-            subprocess.run(["gzip", "-f", final_raw])
-            if final_raw != output_file:
-                if os.path.exists(final_raw + ".gz"): os.rename(final_raw + ".gz", output_file)
-        elif final_raw != output_file:
-            os.rename(final_raw, output_file)
-
-        for c in chunk_files:
-            os.remove(c)
-
-    logging.info("Remapping complete.")
+    fh.close()
+    logging.info("Remapping complete -> %s", output_file)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--transcript-file", required=True)
-    parser.add_argument("-a", "--gene-file", required=True)
-    parser.add_argument("-b", "--genome-file", required=True)
-    parser.add_argument("-o", "--output-file", required=True)
-    parser.add_argument("--min-depth", type=int, default=1)
-    args = parser.parse_args()
-    remap_and_join_files_parquet(
-        args.gene_file, args.genome_file, args.transcript_file, args.output_file, args.min_depth
-    )
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-t", "--transcript-file", required=True)
+    ap.add_argument("-a", "--gene-file", required=True)
+    ap.add_argument("-b", "--genome-file", required=True)
+    ap.add_argument("-o", "--output-file", required=True)
+    ap.add_argument("--min-depth", type=int, default=1)
+    a = ap.parse_args()
+    remap_and_join_files_parquet(a.gene_file, a.genome_file, a.transcript_file,
+                                 a.output_file, a.min_depth)
