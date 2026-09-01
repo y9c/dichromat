@@ -75,20 +75,23 @@ jobs:
       - name: Smoke-test the SIF
         run: |
           set -euo pipefail
-          echo "--- tool versions --------"
-          apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -lc '
+          echo "--- tool versions (non-login shell = image runtime PATH) --------"
+          apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -c '
             set -e
             echo "  PATH=$PATH"
             echo "  which python: $(command -v python)"
-            echo "  readlink /opt/app_venv -> $(readlink /opt/app_venv 2>&1 || echo MISSING)"
-            ls -l /opt/venv/bin/python /opt/app_venv/bin/python 2>&1 | sed "s/^/  /"
-            /opt/venv/bin/python -c "import polars as pl; print(\"  venv python polars\", pl.__version__)" 2>&1 | head -2
-            python -c "import polars as pl; print(\"  default python polars\", pl.__version__)" 2>&1 | head -2
-            /opt/venv/bin/snakemake --version 2>&1 | head -1
-            falco --version 2>&1 | head -1
+            python -c "import polars as pl, scipy, numpy, pysam; print(\"  python imports OK (polars\", pl.__version__ + \")\")"
+            snakemake --version
+            falco --version | head -1
+            countmut --version
+            coralsnake --version
+            cutseq --version | head -1
+            samtools --version | head -1
+            [ -x /pipeline/entrypoint ] && echo "  entrypoint present"
+            python /pipeline/src/report_html.py --help >/dev/null && echo "  report-ok"
           '
           echo "--- real falco -> report_html round-trip (inside SIF) ---"
-          apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -lc '
+          apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -c '
             set -e
             mkdir -p smoke && cd smoke
             for i in $(seq 1 300); do
