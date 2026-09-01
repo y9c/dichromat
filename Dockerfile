@@ -58,11 +58,15 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 ENV VENV_PATH=/opt/venv
 
 # Core libraries + CLI tools (all in one env)
+# NOTE: use polars-lts-cpu (not 'polars'): multiqc hard-requires polars-lts-cpu,
+# and both packages install into the same site-packages/polars/ dir - installing
+# both breaks `import polars` (verified). polars-lts-cpu provides the same API
+# that src/*.py use (scan_csv/scan_parquet/sink_parquet/...).
 RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
     uv pip install --python ${VENV_PATH}/bin/python --no-cache \
         multiqc==1.33 snakemake==9.16.3 cutseq==0.0.70 markdup==0.0.27 \
         countmut==0.0.8 coralsnake==0.0.210 \
-        polars==1.38.1 scipy==1.17.1 numpy==2.4.2 pysam==0.23.3 pyyaml && \
+        polars-lts-cpu==1.33.1 scipy==1.17.1 numpy==2.4.2 pysam==0.23.3 pyyaml && \
     for t in multiqc snakemake cutseq markdup countmut coralsnake; do \
         ln -s ${VENV_PATH}/bin/$t /usr/local/bin/$t; \
     done && \
