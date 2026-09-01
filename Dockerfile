@@ -65,7 +65,7 @@ RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
     uv pip install --python ${VENV_PATH}/bin/python --no-cache \
         snakemake==9.16.3 cutseq==0.0.70 markdup==0.0.27 \
         countmut==0.0.8 coralsnake==0.0.210 \
-        polars-lts-cpu==1.33.1 scipy==1.17.1 numpy==2.4.2 pysam==0.23.3 pyyaml && \
+        duckdb==1.5.5 polars-lts-cpu==1.33.1 scipy==1.17.1 numpy==2.4.2 pysam==0.23.3 pyyaml && \
     for t in snakemake cutseq markdup countmut coralsnake; do \
         ln -s ${VENV_PATH}/bin/$t /usr/local/bin/$t; \
     done && \
