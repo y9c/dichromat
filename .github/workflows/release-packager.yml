@@ -87,14 +87,9 @@ jobs:
           apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -lc '
             set -e
             mkdir -p smoke && cd smoke
-            python - <<"PY"
-import gzip, random
-random.seed(7)
-with gzip.open("smoke.fq.gz","wt") as o:
-    for i in range(300):
-        s="".join(random.choices("ACGT",k=100)); q="".join(chr(33+random.randint(20,40)) for _ in range(100))
-        o.write(f"@r{i}\n{s}\n+\n{q}\n")
-PY
+            for i in $(seq 1 300); do
+              printf "@r%s\nACGTACGTACGTACGTACGTACGTACGTACGT\n+\nIIIIIIIIIIIIIIIIIIIIIIIIIIIIII\n" "$i"
+            done | gzip -c > smoke.fq.gz
             falco -o qc smoke.fq.gz >/dev/null
             python /pipeline/src/report_html.py qc qc.html "$(ls qc/*/fastqc_data.txt)"
             [ -s qc.html ] && echo "  qc.html OK ($(du -h qc.html | cut -f1))"
