@@ -12,7 +12,7 @@ path:
   bgzip: "bgzip"
   markdup: "markdup"
   variant: "variant"
-  multiqc: "multiqc"
+  report_html: "/opt/app_venv/bin/python /pipeline/src/report_html.py"
   coralsnake: "coralsnake"
   countmut: "countmut"
   # Python scripts (use venv Python with installed packages)

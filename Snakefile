@@ -401,7 +401,7 @@ rule report_qc_trimmed:
     benchmark:
         BENCHDIR / "report_qc_trimmed.benchmark.txt"
     shell:
-        "{PATH.multiqc} -f -m fastqc -n {output} {input}"
+        "{PATH.report_html} qc {output} {input}"
 
 
 # premap to contamination
@@ -941,7 +941,7 @@ rule unmapped_report:
     benchmark:
         BENCHDIR / "unmapped_report.benchmark.txt"
     shell:
-        "{PATH.multiqc} -f -m fastqc -n {output} {input}"
+        "{PATH.report_html} qc {output} {input}"
 
 
 #######################
@@ -1388,16 +1388,10 @@ rule generate_mapping_report:
     params:
         report_name="mapping.html",
         report_dir=str(Path("report_reads")),
-        search_dirs=[
-            str(INTERNALDIR / "stats/mqc/reads"),
-            str(INTERNALDIR / "stats/premap"),
-            str(INTERNALDIR / "stats/mainmap"),
-            str(INTERNALDIR / "stats/remap"),
-        ],
     benchmark:
         BENCHDIR / "generate_mapping_report.benchmark.txt"
     shell:
-        "{PATH.multiqc} -f --no-ansi -n {params.report_name} -o {params.report_dir} {params.search_dirs}"
+        "{PATH.report_html} tables {output} {input}"
 
 
 rule generate_site_report:
@@ -1413,8 +1407,25 @@ rule generate_site_report:
     params:
         report_name="sites.html",
         report_dir=str(Path("report_sites")),
-        search_dir=str(INTERNALDIR / "stats/mqc/sites"),
     benchmark:
         BENCHDIR / "generate_site_report.benchmark.txt"
     shell:
-        "{PATH.multiqc} -f -n {params.report_name} -o {params.report_dir} {params.search_dir}"
+        "{PATH.report_html} tables {output} {input}"
+
+
+rule final_report:
+    """Assemble one self-contained report.html from all per-section HTML."""
+    input:
+        "report_reads/trimmed.html",
+        "report_reads/unmapped.html",
+        "report_reads/mapping.html",
+        "report_sites/sites.html",
+    output:
+        "report.html",
+    benchmark:
+        BENCHDIR / "final_report.benchmark.txt"
+    shell:
+        """
+        mkdir -p report_reads report_sites
+        {PATH.report_html} assemble {output} {input}
+        """

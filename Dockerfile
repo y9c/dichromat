@@ -58,16 +58,15 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 ENV VENV_PATH=/opt/venv
 
 # Core libraries + CLI tools (all in one env)
-# NOTE: use polars-lts-cpu (not 'polars'): multiqc hard-requires polars-lts-cpu,
-# and both packages install into the same site-packages/polars/ dir - installing
-# both breaks `import polars` (verified). polars-lts-cpu provides the same API
-# that src/*.py use (scan_csv/scan_parquet/sink_parquet/...).
+# NOTE: MultiQC was removed/replaced by the lightweight src/report_html.py.
+# polars-lts-cpu provides the `polars` module that src/*.py use directly
+# (scan_csv/scan_parquet/sink_parquet/...).
 RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
     uv pip install --python ${VENV_PATH}/bin/python --no-cache \
-        multiqc==1.33 snakemake==9.16.3 cutseq==0.0.70 markdup==0.0.27 \
+        snakemake==9.16.3 cutseq==0.0.70 markdup==0.0.27 \
         countmut==0.0.8 coralsnake==0.0.210 \
         polars-lts-cpu==1.33.1 scipy==1.17.1 numpy==2.4.2 pysam==0.23.3 pyyaml && \
-    for t in multiqc snakemake cutseq markdup countmut coralsnake; do \
+    for t in snakemake cutseq markdup countmut coralsnake; do \
         ln -s ${VENV_PATH}/bin/$t /usr/local/bin/$t; \
     done && \
     ln -s ${VENV_PATH} /opt/app_venv
@@ -113,9 +112,9 @@ RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/smithlabc
 # Drop bytecode and test/docs trees, strip shared objects (symbol tables only;
 # keeps the .so loadable), and remove the uv/uvx launchers which are only
 # needed at build time but would otherwise be copied into the final image.
-# kaleido/pyarrow/pulp are pulled in as transitive deps (plotly / multiqc /
-# snakemake) but are NOT needed at runtime for the pipeline's usage
-# (interactive-HTML QC, default snakemake scheduler) - verified by import test.
+# pulp is a snakemake transitive dep we don't use (default scheduler); the
+# kaleido/pyarrow entries are now empty since MultiQC was removed - kept as a
+# defensive catch-all.
 RUN find /opt -name "__pycache__" -type d -exec rm -rf {} + && \
     find /opt -name "*.pyc" -delete && \
     (find ${VENV_PATH}/lib -maxdepth 4 -type d \( -iname 'kaleido*' -o -iname 'pyarrow*' -o -iname 'pulp*' \) -exec rm -rf {} + 2>/dev/null || true) && \
