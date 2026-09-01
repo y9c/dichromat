@@ -109,8 +109,12 @@ RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/smithlabc
 # Drop bytecode and test/docs trees, strip shared objects (symbol tables only;
 # keeps the .so loadable), and remove the uv/uvx launchers which are only
 # needed at build time but would otherwise be copied into the final image.
+# kaleido/pyarrow/pulp are pulled in as transitive deps (plotly / multiqc /
+# snakemake) but are NOT needed at runtime for the pipeline's usage
+# (interactive-HTML QC, default snakemake scheduler) - verified by import test.
 RUN find /opt -name "__pycache__" -type d -exec rm -rf {} + && \
     find /opt -name "*.pyc" -delete && \
+    (find ${VENV_PATH}/lib -maxdepth 4 -type d \( -iname 'kaleido*' -o -iname 'pyarrow*' -o -iname 'pulp*' \) -exec rm -rf {} + 2>/dev/null || true) && \
     (find /opt -type d \( -name tests -o -name test -o -name docs -o -name doc -o -name examples \) -prune -exec rm -rf {} + 2>/dev/null || true) && \
     (find /opt -type f -name "*.so" -exec strip --strip-unneeded {} + 2>/dev/null || true) && \
     rm -f /usr/local/bin/uv /usr/local/bin/uvx
