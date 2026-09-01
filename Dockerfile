@@ -109,9 +109,13 @@ RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/smithlabc
     rm -rf /build/falco
 
 # --- CLEANUP ---
-# Drop bytecode and test/docs trees, strip shared objects (symbol tables only;
-# keeps the .so loadable), and remove the uv/uvx launchers which are only
-# needed at build time but would otherwise be copied into the final image.
+# Drop bytecode and test/docs trees, and remove the uv/uvx launchers which are
+# only needed at build time but would otherwise be copied into the final
+# image.
+# NOTE: we deliberately do NOT strip *.so files - wheels are already stripped,
+# and `strip` breaks page alignment of scipy's bundled OpenBLAS
+# (libscipy_openblas64_*.so) so `import numpy/scipy` fails at runtime
+# (caught by the SIF smoke-test).
 # pulp is a snakemake transitive dep we don't use (default scheduler); the
 # kaleido/pyarrow entries are now empty since MultiQC was removed - kept as a
 # defensive catch-all.
@@ -119,7 +123,6 @@ RUN find /opt -name "__pycache__" -type d -exec rm -rf {} + && \
     find /opt -name "*.pyc" -delete && \
     (find ${VENV_PATH}/lib -maxdepth 4 -type d \( -iname 'kaleido*' -o -iname 'pyarrow*' -o -iname 'pulp*' \) -exec rm -rf {} + 2>/dev/null || true) && \
     (find /opt -type d \( -name tests -o -name test -o -name docs -o -name doc -o -name examples \) -prune -exec rm -rf {} + 2>/dev/null || true) && \
-    (find /opt -type f -name "*.so" -exec strip --strip-unneeded {} + 2>/dev/null || true) && \
     rm -f /usr/local/bin/uv /usr/local/bin/uvx
 
 
