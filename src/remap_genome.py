@@ -26,16 +26,26 @@ def parse_transcript(tx_file):
     raw = open(tx_file).read().splitlines()
     if not raw:
         return [], [], {}
+    header = raw[0].split("\t")
+    cols = {c: i for i, c in enumerate(header)}
+    for need in ("gene_id", "chrom", "strand", "spans"):
+        if need not in cols:
+            raise ValueError("annotation header missing %r (has %s)"
+                             % (need, header))
+    gi, ci, ri, si = cols["gene_id"], cols["chrom"], cols["strand"], cols["spans"]
     for line in raw[1:]:
-        gid = line.split("\t")[0]
+        parts = line.split("\t")
+        if len(parts) <= si:
+            continue
+        gid = parts[gi]
         if gid not in seen:
             seen.add(gid)
             order.append(gid)
     for line in raw[1:]:
         parts = line.rstrip("\n").split("\t")
-        if len(parts) < 4:
+        if len(parts) <= si:
             continue
-        gid, chrom, strand, spans = parts[0], parts[1], parts[2], parts[3]
+        gid, chrom, strand, spans = parts[gi], parts[ci], parts[ri], parts[si]
         exon_len = 0
         for span in spans.split(","):
             a, b = span.split("-", 1)
