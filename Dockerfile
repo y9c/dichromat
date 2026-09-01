@@ -49,24 +49,24 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# --- Create Isolated Environments ---
-ENV APP_VENV_PATH=/opt/app_venv
-RUN python${PYTHON_VERSION_FOR_APP} -m venv ${APP_VENV_PATH}
+# --- Single merged runtime environment -----------------------------------
+# All pipeline Python libraries + bioinformatics CLI tools live in ONE venv,
+# instead of a separate per-tool venv (`uv tool install`). Heavy shared deps
+# (pysam ~75 MB, numpy ~58 MB, rich/click, ...) are therefore installed once.
+# /opt/app_venv is kept as a symlink so existing default.yaml / entrypoint
+# paths keep working unchanged.
+ENV VENV_PATH=/opt/venv
 
-# Core libraries
-ENV CORE_PACKAGES="polars==1.38.1 scipy==1.17.1 numpy==2.4.2 pysam==0.23.3 pyyaml"
-RUN uv pip install --python ${APP_VENV_PATH}/bin/python --no-cache ${CORE_PACKAGES}
-
-# CLI tools
-ENV UV_TOOL_BIN_DIR=/usr/local/bin
-ENV UV_TOOL_DIR=/opt/uv_tools
-# Install python tools (Consolidated to save layers/space)
-RUN uv tool install multiqc==1.33 --no-cache && \
-    uv tool install snakemake==9.16.3 --no-cache && \
-    uv tool install cutseq==0.0.70 --no-cache && \
-    uv tool install markdup==0.0.27 --no-cache && \
-    uv tool install countmut==0.0.8 --no-cache && \
-    uv tool install coralsnake==0.0.210 --no-cache
+# Core libraries + CLI tools (all in one env)
+RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
+    uv pip install --python ${VENV_PATH}/bin/python --no-cache \
+        multiqc==1.33 snakemake==9.16.3 cutseq==0.0.70 markdup==0.0.27 \
+        countmut==0.0.8 coralsnake==0.0.210 \
+        polars==1.38.1 scipy==1.17.1 numpy==2.4.2 pysam==0.23.3 pyyaml && \
+    for t in multiqc snakemake cutseq markdup countmut coralsnake; do \
+        ln -s ${VENV_PATH}/bin/$t /usr/local/bin/$t; \
+    done && \
+    ln -s ${VENV_PATH} /opt/app_venv
 
 # --- Build samtools/bgzip ---
 WORKDIR /build/sources
@@ -104,8 +104,14 @@ RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/smithlabc
     mv falco /usr/local/bin/ && cd .. && rm -rf /build/falco
 
 # --- CLEANUP ---
+# Drop bytecode and test/docs trees, strip shared objects (symbol tables only;
+# keeps the .so loadable), and remove the uv/uvx launchers which are only
+# needed at build time but would otherwise be copied into the final image.
 RUN find /opt -name "__pycache__" -type d -exec rm -rf {} + && \
-    find /opt -name "*.pyc" -delete
+    find /opt -name "*.pyc" -delete && \
+    (find /opt -type d \( -name tests -o -name test -o -name docs -o -name doc -o -name examples \) -prune -exec rm -rf {} + 2>/dev/null || true) && \
+    (find /opt -type f -name "*.so" -exec strip --strip-unneeded {} + 2>/dev/null || true) && \
+    rm -f /usr/local/bin/uv /usr/local/bin/uvx
 
 
 # ----------- Final Stage -----------
@@ -114,7 +120,6 @@ FROM python:3.13-slim-bookworm AS final
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIPELINE_HOME=/pipeline
 ENV APP_VENV_PATH=/opt/app_venv
-ENV UV_TOOL_DIR=/opt/uv_tools
 ENV PATH="${APP_VENV_PATH}/bin:/usr/local/bin:$PATH"
 
 ARG APT_MIRROR
@@ -123,7 +128,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     fi && \
     apt-get update && \
     apt-get -y --no-install-recommends install \
-    ca-certificates zlib1g libxml2 libbz2-1.0 liblzma5 pigz && \
+    ca-certificates zlib1g libbz2-1.0 liblzma5 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy only necessary folders/bins from builder to keep size minimal
