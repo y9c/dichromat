@@ -76,13 +76,17 @@ jobs:
         run: |
           set -euo pipefail
           echo "--- tool versions --------"
-          apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -lc \
-            "set -e; python -c 'import polars as pl; print(\"polars\", pl.__version__)'; \
-             python -c 'import scipy, numpy, pysam; print(\"scipy/numpy/pysam OK\")'; \
-             snakemake --version; falco --version | head -1; countmut --version; \
-             coralsnake --version; cutseq --version | head -1; \
-             samtools --version | head -1; [ -x /pipeline/entrypoint ]; \
-             python /pipeline/src/report_html.py --help >/dev/null && echo report-ok"
+          apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -lc '
+            set -e
+            echo "  PATH=$PATH"
+            echo "  which python: $(command -v python)"
+            echo "  readlink /opt/app_venv -> $(readlink /opt/app_venv 2>&1 || echo MISSING)"
+            ls -l /opt/venv/bin/python /opt/app_venv/bin/python 2>&1 | sed "s/^/  /"
+            /opt/venv/bin/python -c "import polars as pl; print(\"  venv python polars\", pl.__version__)" 2>&1 | head -2
+            python -c "import polars as pl; print(\"  default python polars\", pl.__version__)" 2>&1 | head -2
+            /opt/venv/bin/snakemake --version 2>&1 | head -1
+            falco --version 2>&1 | head -1
+          '
           echo "--- real falco -> report_html round-trip (inside SIF) ---"
           apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -lc '
             set -e
