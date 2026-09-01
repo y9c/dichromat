@@ -1,6 +1,6 @@
 # Use ARGs for versions
 ARG SAMTOOLS_VERSION="1.23"
-ARG FALCO_VERSION="1.2.3"
+ARG FALCO_VERSION="2.0.1"
 ARG PYTHON_VERSION_FOR_APP="3.13"
 
 # -------- Mirror toggles (China vs rest of world) --------
@@ -97,11 +97,13 @@ RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/y9c/hisat
     ln -s /usr/local/bin/hisat3n /usr/local/bin/hisat-3n && \
     rm -rf /build/hisat2
 
-# --- Build Falco ---
+# --- Install falco (FastQC-style QC; v2+ ships as a prebuilt linux binary -
+# no source build needed; x86-64, matching the ubuntu build runners) ---
 WORKDIR /build/falco
-RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}.tar.gz -o falco.tar.gz && \
-    tar -xzvf falco.tar.gz && cd falco-* && ./configure && make -j$(nproc) && strip falco && \
-    mv falco /usr/local/bin/ && cd .. && rm -rf /build/falco
+RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/smithlabcode/falco/releases/download/v${FALCO_VERSION}/falco-${FALCO_VERSION}-Linux.tar.gz -o falco.tar.gz && \
+    tar -xzf falco.tar.gz --strip-components 2 -C /usr/local/bin falco-${FALCO_VERSION}-Linux/bin/falco && \
+    chmod +x /usr/local/bin/falco && \
+    rm -rf /build/falco
 
 # --- CLEANUP ---
 # Drop bytecode and test/docs trees, strip shared objects (symbol tables only;
