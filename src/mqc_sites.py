@@ -1,13 +1,38 @@
 #!/usr/bin/env python
-import sys
-import polars as pl
-import os
+"""polars-free version of mqc_sites.py; heavy aggregation pushed into duckdb
+(columnar pushdown + spilling => lower RAM than full parquet loads).
+
+Produces the same QC tables as the polars version:
+  * motif conversion tables (transcript / genome)
+  * per-library summary (count, mean depth, mean/max ratio)
+  * per-library ratio & depth histograms (identical bins)
+
+Division-by-zero (u/d, d=0) follows IEEE like polars (inf/nan).
+"""
+
 import argparse
-import numpy as np
-import json
 import logging
+import os
+import sys
+
+import duckdb
+import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+def _fmt(v):
+    """Match polars' TSV float/int rendering closely ("NaN"/"inf" casing)."""
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, float):
+        if v != v:          # NaN
+            return "NaN"
+        return str(v)       # inf / -inf / finite (py3 str(v)==repr(v))
+    return str(v)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -18,7 +43,7 @@ def main():
     parser.add_argument("transcript_table_output")
     parser.add_argument("genome_table_output")
     parser.add_argument("--motif-files", nargs="+")
-    parser.add_argument("--sites-file", nargs="+", help="Input sites files (Parquet or TSV)")
+    parser.add_argument("--sites-file", nargs="+")
     parser.add_argument("--target-base", default="A")
     args = parser.parse_args()
 
@@ -27,115 +52,112 @@ def main():
         return
 
     try:
-        logging.info(f"Scanning input files: {args.sites_file}")
-        lfs = []
+        con = duckdb.connect()
+        parts = []
         for f in args.sites_file:
             if f.endswith(".parquet"):
-                lfs.append(pl.scan_parquet(f))
+                parts.append(f"(SELECT * FROM read_parquet('{f}'))")
             else:
-                lfs.append(pl.scan_csv(f, separator='\t', infer_schema_length=None))
-        
-        lf = pl.concat(lfs)
-        schema = lf.collect_schema()
-        depth_cols = sorted([c for c in schema.names() if c.startswith("Depth_")])
+                parts.append(f"(SELECT * FROM read_csv_auto('{f}', delim='\\t', header=true))")
+        sites_sql = "\nUNION ALL BY NAME\n".join(parts)
+
+        depth_cols = sorted([c for c in con.sql(f"DESCRIBE SELECT * FROM ({sites_sql})")
+                             .fetchall() if c[0].startswith("Depth_")])
+        depth_cols = [c[0] for c in depth_cols]
         libraries = [c.replace("Depth_", "") for c in depth_cols]
-        
         if not libraries:
             logging.warning("No depth columns found in sites file.")
             return
 
-        # 1. MOTIF HEATMAP
+        # 1. MOTIF HEATMAP tables (final)
         if args.motif_files:
             logging.info("Processing motif conversion files...")
-            motif_dfs = []
+            motif_parts = []
             for f in args.motif_files:
                 sample_name = os.path.basename(f).split(".")[0]
                 reftype = "transcript" if "transcript" in f else "genome"
-                df = pl.read_csv(f, separator='\t')
-                if not df.is_empty():
-                    df = df.with_columns([
-                        pl.lit(sample_name).alias("sample"),
-                        pl.lit(reftype).alias("reftype")
-                    ])
-                    motif_dfs.append(df)
-            
-            if motif_dfs:
-                df_motifs = pl.concat(motif_dfs)
-                df_agg = df_motifs.group_by(["Motif", "reftype"]).agg([
-                    (pl.col("Unconverted").sum() / pl.col("Depth").sum()).alias("Ratio")
-                ])
-                
-                for reftype in ["transcript", "genome"]:
-                    df_p = df_agg.filter(pl.col("reftype") == reftype).pivot(
-                        on="Motif", index="reftype", values="Ratio"
-                    )
-                    if not df_p.is_empty():
-                        df_p = df_p.drop("reftype")
-                        out_path = args.transcript_table_output if reftype == "transcript" else args.genome_table_output
-                        df_p.write_csv(out_path, separator='\t')
+                motif_parts.append(
+                    f"(SELECT *, '{sample_name}' AS sample, '{reftype}' AS reftype"
+                    f" FROM read_csv_auto('{f}', delim='\\t', header=true))")
+            if motif_parts:
+                agg_sql = (
+                    "SELECT Motif, reftype,"
+                    " SUM(CAST(Unconverted AS DOUBLE))/SUM(CAST(Depth AS DOUBLE)) AS Ratio"
+                    f" FROM ({' UNION ALL BY NAME '.join(motif_parts)})"
+                    " GROUP BY Motif, reftype")
+                rows = con.sql(agg_sql).fetchall()
+                for reftype, out_path in [("transcript", args.transcript_table_output),
+                                          ("genome", args.genome_table_output)]:
+                    sub = sorted([(m, r) for m, t, r in rows if t == reftype],
+                                 key=lambda x: x[0])
+                    if not sub:
+                        continue
+                    with open(out_path, "w", newline="") as fh:
+                        fh.write("\t".join(str(m) for m, _ in sub) + "\n")
+                        fh.write("\t".join(_fmt(r) for _, r in sub) + "\n")
 
-        # 2. GLOBAL STREAMING AGGREGATION
-        logging.info("Executing global streaming aggregation for Summary and Histograms...")
-        
-        ratio_bins = np.linspace(0, 1, 51)
-        depth_bins = np.logspace(0, 5, 51)
-        
-        summary_exprs = []
+        # 2. Per-library summary (columnar aggregate, tiny result => low RAM)
+        logging.info("Aggregating site summaries in duckdb...")
+        aggs = []
         for lib in libraries:
-            d_col = f"Depth_{lib}"
-            u_col = f"Uncon_{lib}"
-            summary_exprs.extend([
-                pl.col(d_col).count().alias(f"cnt_{lib}"),
-                pl.col(d_col).sum().alias(f"sum_d_{lib}"),
-                (pl.col(u_col).cast(pl.Float64) / pl.col(d_col).cast(pl.Float64)).sum().alias(f"sum_r_{lib}"),
-                (pl.col(u_col).cast(pl.Float64) / pl.col(d_col).cast(pl.Float64)).max().alias(f"max_r_{lib}")
-            ])
+            dcol = f"Depth_{lib}"
+            ucol = f"Uncon_{lib}"
+            aggs.append(f'COUNT("{dcol}") AS cnt_{lib}')
+            aggs.append(f'SUM(CAST("{dcol}" AS DOUBLE)) AS sumd_{lib}')
+            aggs.append(f'SUM(CAST("{ucol}" AS DOUBLE)/CAST("{dcol}" AS DOUBLE)) AS sumr_{lib}')
+            aggs.append(f'MAX(CAST("{ucol}" AS DOUBLE)/CAST("{dcol}" AS DOUBLE)) AS maxr_{lib}')
+        one = con.sql(f"SELECT {', '.join(aggs)} FROM ({sites_sql})").fetchone()
 
-        df_summary_raw = lf.select(summary_exprs).collect(engine="streaming")
-        
         summary_rows = []
-        for lib in libraries:
-            cnt = df_summary_raw[0, f"cnt_{lib}"]
-            if cnt > 0:
+        for i, lib in enumerate(libraries):
+            cnt = one[4 * i]
+            if cnt is not None and cnt > 0:
                 summary_rows.append({
                     "Sample": lib,
-                    "Total Sites": cnt,
-                    "Mean Depth": df_summary_raw[0, f"sum_d_{lib}"] / cnt,
-                    "Mean Ratio": df_summary_raw[0, f"sum_r_{lib}"] / cnt,
-                    "Max Ratio": df_summary_raw[0, f"max_r_{lib}"]
+                    "Total Sites": int(cnt),
+                    "Mean Depth": one[4 * i + 1] / cnt,
+                    "Mean Ratio": one[4 * i + 2] / cnt,
+                    "Max Ratio": one[4 * i + 3],
                 })
-        
         if summary_rows:
-            pl.DataFrame(summary_rows).write_csv(args.summary_output, separator='\t')
+            cols = ["Sample", "Total Sites", "Mean Depth", "Mean Ratio", "Max Ratio"]
+            with open(args.summary_output, "w", newline="") as fh:
+                fh.write("\t".join(cols) + "\n")
+                for r in summary_rows:
+                    fh.write("\t".join(_fmt(v) for v in
+                             [r["Sample"], r["Total Sites"], r["Mean Depth"],
+                              r["Mean Ratio"], r["Max Ratio"]]) + "\n")
 
-        # 3. HISTOGRAMS
-        logging.info("Generating histograms...")
-        df_ratio_hist = pl.DataFrame({"Ratio": [f"{m:.2f}" for m in (ratio_bins[:-1] + ratio_bins[1:]) / 2]})
-        df_depth_hist = pl.DataFrame({"Depth": [int(m) for m in (depth_bins[:-1] + depth_bins[1:]) / 2]})
+        # 3. Histograms (per library; one column at a time)
+        logging.info("Building histograms...")
+        ratio_bins = np.linspace(0, 1, 51)
+        depth_bins = np.logspace(0, 5, 51)
+        ratio_keys = ["Ratio"] + libraries
+        depth_keys = ["Depth"] + libraries
+        ratio_hist = [[f"{(a + b) / 2:.2f}" for a, b in zip(ratio_bins[:-1], ratio_bins[1:])]]
+        depth_hist = [[int((a + b) // 2) for a, b in zip(depth_bins[:-1], depth_bins[1:])]]
+        for lib in libraries:
+            dcol, ucol = f"Depth_{lib}", f"Uncon_{lib}"
+            d_vals = np.asarray(
+                con.sql(f'SELECT "{dcol}" FROM ({sites_sql}) WHERE "{dcol}" > 0')
+                .fetchall(), dtype=np.float64).ravel()
+            u_vals = np.asarray(
+                con.sql(f'SELECT "{ucol}" FROM ({sites_sql}) WHERE "{dcol}" > 0')
+                .fetchall(), dtype=np.float64).ravel()
+            if len(d_vals):
+                r_c, _ = np.histogram(u_vals / d_vals, bins=ratio_bins)
+                d_c, _ = np.histogram(d_vals, bins=depth_bins)
+                ratio_hist.append([int(x) for x in r_c])
+                depth_hist.append([int(x) for x in d_c])
 
-        lib_groups = [libraries[i:i+4] for i in range(0, len(libraries), 4)]
-        for group in lib_groups:
-            logging.info(f"  Processing group: {group}")
-            group_cols = []
-            for lib in group:
-                group_cols.extend([f"Depth_{lib}", f"Uncon_{lib}"])
-            
-            df_group = lf.select(group_cols).collect(engine="streaming")
-            
-            for lib in group:
-                d_vals = df_group[f"Depth_{lib}"].filter(df_group[f"Depth_{lib}"] > 0).to_numpy()
-                u_vals = df_group[f"Uncon_{lib}"].filter(df_group[f"Depth_{lib}"] > 0).to_numpy()
-                if len(d_vals) > 0:
-                    r_vals = u_vals / d_vals
-                    r_c, _ = np.histogram(r_vals, bins=ratio_bins)
-                    d_c, _ = np.histogram(d_vals, bins=depth_bins)
-                    df_ratio_hist = df_ratio_hist.with_columns(pl.Series(lib, r_c))
-                    df_depth_hist = df_depth_hist.with_columns(pl.Series(lib, d_c))
-            del df_group
+        def _write_hist(path, keys, hist):
+            with open(path, "w", newline="") as fh:
+                fh.write("\t".join(keys) + "\n")
+                for i in range(len(hist[0])):
+                    fh.write("\t".join(_fmt(col[i]) for col in hist) + "\n")
 
-        df_ratio_hist.write_csv(args.dist_output, separator='\t')
-        df_depth_hist.write_csv(args.depth_output, separator='\t')
-        
+        _write_hist(args.dist_output, ratio_keys, ratio_hist)
+        _write_hist(args.depth_output, depth_keys, depth_hist)
         logging.info("MQC Site Aggregation Complete.")
 
     except Exception as e:
@@ -143,6 +165,7 @@ def main():
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
