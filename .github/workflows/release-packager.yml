@@ -68,6 +68,38 @@ jobs:
           apptainer build "$SIF_FILENAME" "$DOCKER_IMAGE_URI"
           echo "SIF_FILE_PATH=$SIF_FILENAME" >> $GITHUB_ENV
 
+      # 7.5 Smoke-test the freshly-built SIF before it is allowed to publish.
+      #   - runs the critical runtime imports/tools (polars is the one that
+      #     silently broke before), and
+      #   - executes a real falco QC -> report_html round-trip inside the SIF.
+      - name: Smoke-test the SIF
+        run: |
+          set -euo pipefail
+          echo "--- tool versions --------"
+          apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -lc \
+            "set -e; python -c 'import polars as pl; print(\"polars\", pl.__version__)'; \
+             python -c 'import scipy, numpy, pysam; print(\"scipy/numpy/pysam OK\")'; \
+             snakemake --version; falco --version | head -1; countmut --version; \
+             coralsnake --version; cutseq --version | head -1; \
+             samtools --version | head -1; [ -x /pipeline/entrypoint ]; \
+             python /pipeline/src/report_html.py --help >/dev/null && echo report-ok"
+          echo "--- real falco -> report_html round-trip (inside SIF) ---"
+          apptainer exec -B "$PWD":/workspace -W /workspace dichromat.sif bash -lc '
+            set -e
+            mkdir -p smoke && cd smoke
+            python - <<"PY"
+import gzip, random
+random.seed(7)
+with gzip.open("smoke.fq.gz","wt") as o:
+    for i in range(300):
+        s="".join(random.choices("ACGT",k=100)); q="".join(chr(33+random.randint(20,40)) for _ in range(100))
+        o.write(f"@r{i}\n{s}\n+\n{q}\n")
+PY
+            falco -o qc smoke.fq.gz >/dev/null
+            python /pipeline/src/report_html.py qc qc.html "$(ls qc/*/fastqc_data.txt)"
+            [ -s qc.html ] && echo "  qc.html OK ($(du -h qc.html | cut -f1))"
+          '
+
       # 8. Create or update a "Nightly Build" pre-release and upload the new SIF file
       - name: Create or Update Nightly Pre-Release
         uses: softprops/action-gh-release@v2
