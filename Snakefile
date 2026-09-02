@@ -1157,18 +1157,29 @@ rule cal_spike_ratio:
         """
 
 
-rule countmut_composition:
-    """countmut >= 0.2.0: per-base composition table (chrom pos strand ref depth a c g t n).
+rule run_countmut:
+    """countmut >= 0.2.2: native per-strand 2-group conversion view
+    (chrom pos strand motif u0 u1 m0 m1), written straight by countmut --
+    the pileup_reformat.py bridge is gone.
 
-    The legacy --ref-base/--mut-base tiered view no longer exists; keep only
-    the target-base sites (all the downstream pileup steps need) via the Lua
-    site filter (-p).  countmut >= 0.2 also dropped the dedicated read-QC
-    flags, so the legacy 0.0.8 read gate (the pipeline's historical defaults:
-    NS<=1, Yf>=1, Zf<=3, baseq>=20, 2bp/2bp read-end trim; mapq>=0 is a no-op)
-    is re-expressed as the Lua read filter (-e).  A failing read contributes
-    no bases at all -- exactly what 0.0.8 did (it discarded failing reads
-    before counting; its u2/m2 "insufficient conversion" bins were dead code
-    and always 0, so the emitted u1/m1 covered exactly this read set).
+    u0/u1 = reference-base counts (default A; C when pileup_ct), m0/m1 =
+    mutation-base counts (default G; T when pileup_ct).  The single -e
+    expression is a group router re-expressing the legacy 0.0.8 read gate
+    (the pipeline's historical defaults: NS<=1, Yf>=1, Zf<=3, baseq>=20,
+    2bp/2bp read-end trim; mapq>=0 is a no-op):
+
+      group 1 = bases passing the high-conversion gate,
+      group 0 = all other kept bases (low quality / read-end positions),
+      NS > max_sub drops the read entirely (nil) -- exactly as 0.0.8
+      discarded failing reads.
+
+    Group 1 (u1/m1) is byte-for-byte the legacy gated count set, so the
+    downstream consumers (unfilter_genes_stat / motif_conversion_rate_stat /
+    merge_samples) keep computing on u1/m1 only; u0/m0 are extra columns in
+    the TSV.  NOTE: the 0.0.8 conversion gate reads the Yf/Zf
+    (forward-channel) tags even for the C->T view -- kept here for parity.
+    The 31-mer motif (pad 15) must stay in sync with substr($4,15,3) in
+    motif_conversion_rate_stat.
     """
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
@@ -1183,20 +1194,15 @@ rule countmut_composition:
             )
         ),
     output:
-        temp(TEMPDIR / "pileup/{sample}.{reftype}.composition.tsv"),
+        temp(TEMPDIR / "pileup/{sample}.{reftype}.tsv"),
     params:
-        site_filter=lambda wildcards: (
-            "ref == 'C'" if config.get("pileup_ct", False) else "ref == 'A'"
-        ),
-        # Legacy 0.0.8 read acceptance, now a Lua expression (0.0.8 defaults:
-        # max_sub=1, min_con=1, max_unc=3, min_baseq=20, trim 2/2, min_mapq=0).
-        # With equal trims the legacy per-strand condition reduces to
-        # `qpos >= trim and qlen - qpos > trim` on both strands.
-        # NOTE: the 0.0.8 conversion gate reads the Yf/Zf (forward-channel)
-        # tags even for the C->T view -- kept here for parity.
-        read_gate=lambda: (
-            "tag('NS') <= {} and tag('Yf') >= {} and tag('Zf') <= {}"
-            " and bq >= {} and qpos >= {} and qlen - qpos > {}"
+        # 2-group router (countmut >= 0.2.2): group 1 = high-conversion bases
+        # (legacy 0.0.8 gate), group 0 = all other kept bases; NS > max_sub
+        # drops the read (nil).  With equal trims the legacy per-strand
+        # condition reduces to `qpos >= trim and qlen - qpos > trim`.
+        router=lambda wildcards: (
+            "([NS] <= {}) and (([Yf] >= {} and [Zf] <= {} and bq >= {}"
+            " and qpos >= {} and qlen - qpos > {}) and 1 or 0)"
         ).format(
             config.get("countmut_max_sub", 1),
             config.get("countmut_min_con", 1),
@@ -1205,38 +1211,28 @@ rule countmut_composition:
             config.get("countmut_trim", 2),
             config.get("countmut_trim", 2),
         ),
+        # Target-base sites only (like the old bridge's row filter
+        # `ref == base and u+m > 0`).  -p sees both-strand all-group totals,
+        # so a strand row with only group-0 counts may still appear; all
+        # downstream consumers guard on u1+m1 > 0.
+        site_filter=lambda wildcards: (
+            "ref == 'C' and (c + t) > 0"
+            if config.get("pileup_ct", False)
+            else "ref == 'A' and (a + g) > 0"
+        ),
+        # \t is expanded by the C core (\t in --fmt-header; Lua string
+        # literal in --output-format), so the shell sees plain text.
+        fmt_header="chrom\\tpos\\tstrand\\tmotif\\tu0\\tu1\\tm0\\tm1",
+        output_fmt=lambda wildcards: (
+            "{chrom}\\t{pos+1}\\t{strand}\\t{motif}\\t{c.0}\\t{c.1}\\t{t.0}\\t{t.1}"
+            if config.get("pileup_ct", False)
+            else "{chrom}\\t{pos+1}\\t{strand}\\t{motif}\\t{a.0}\\t{a.1}\\t{g.0}\\t{g.1}"
+        ),
     threads: 64
     benchmark:
         BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
     shell:
-        "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} -p \"{params.site_filter}\" -e \"{params.read_gate}\" > /dev/null"
-
-
-rule run_countmut:
-    """Rewrite the composition table into the legacy 10-column pileup layout
-    (chrom pos strand motif u0 u1 u2 m0 m1 m2) so the pileup consumers
-    (unfilter_genes_stat / motif_conversion_rate_stat / merge_samples) are
-    unchanged.  u1 = reference-base count (default A), m1 = mutation-base
-    count (default G); u0/u2/m0/m2 = 0 (countmut >= 0.2 has no quality
-    tiers)."""
-    input:
-        composition=TEMPDIR / "pileup/{sample}.{reftype}.composition.tsv",
-        ref=lambda wildcards: (
-            INTERNALDIR / "ref/transcript.fa"
-            if wildcards.reftype == "transcript"
-            else (
-                INTERNALDIR / "ref/genes.fa"
-                if wildcards.reftype == "genes"
-                else REF["genome"]["fa"]
-            )
-        ),
-    output:
-        temp(TEMPDIR / "pileup/{sample}.{reftype}.tsv"),
-    params:
-        ref_base=lambda wildcards: "C" if config.get("pileup_ct", False) else "A",
-        mut_base=lambda wildcards: "T" if config.get("pileup_ct", False) else "G",
-    shell:
-        "{PATH.pileup_reformat} -i {input.composition} -r {input.ref} --ref-base {params.ref_base} --mut-base {params.mut_base} -o {output}"
+        "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} -e \"{params.router}\" -p \"{params.site_filter}\" --motif-pad 15 --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\" > /dev/null"
 
 
 rule pileup_base:
@@ -1252,6 +1248,14 @@ rule pileup_base:
 
 
 rule unfilter_genes_stat:
+    """Per-reference summary of the 8-column pileup (chrom pos strand motif
+    u0 u1 m0 m1): unconverted = u1 (group 1 = the legacy gated set),
+    depth = u1+m1, ratio = u1/(u1+m1) -- byte-for-byte the pre-router
+    numbers (group 0 is not used here; motif_conversion_rate_stat reports it
+    in the *_all columns).  NOTE: the legacy awk keyed `u` on $6 (the u1
+    value) while d/r/n were keyed on $1, so the END block divided by zero on
+    any non-empty input (fatal in gawk/mawk); `u[$1]` is the evident intent
+    (per-reference summary) and is what this rule now does."""
     input:
         INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
     output:
@@ -1260,11 +1264,18 @@ rule unfilter_genes_stat:
         BENCHDIR / "unfilter_genes_stat_{sample}_{reftype}.benchmark.txt"
     shell:
         """
-        zcat {input} | awk -F '\\t' 'NR>1 && $1!~"^probe_" && ($6+$9+$7+$10+0)>0{{u[$6]+=$6+$7; d[$1]+=$6+$9+$7+$10; r[$1]+=($6+$7)/($6+$9+$7+$10); n[$1]+=1}}END{{ for(x in u){{print x,n[x],u[x],d[x],r[x]/n[x]}} }}' > {output}
+        zcat {input} | awk -F '\\t' 'NR>1 && $1!~"^probe_" && ($6+$8+0)>0{{u[$1]+=$6; d[$1]+=$6+$8; r[$1]+=$6/($6+$8); n[$1]+=1}}END{{ for(x in u){{print x,n[x],u[x],d[x],r[x]/n[x]}} }}' > {output}
         """
 
 
 rule motif_conversion_rate_stat:
+    """Per-3-mer conversion rate around target-base sites from the 8-column
+    pileup (chrom pos strand motif u0 u1 m0 m1; motif 31-mer, center = 16th
+    base, so the 3-mer is substr($4,15,3)).  The first five columns keep the
+    legacy schema AND values (group 1 = the legacy gated set):
+    Motif/Count/Unconverted/Depth/Ratio.  The three *_all columns additionally
+    report the same per-motif stats over ALL kept groups (u0+u1 unconverted,
+    u0+u1+m0+m1 depth)."""
     input:
         pileup=INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
     output:
@@ -1275,12 +1286,13 @@ rule motif_conversion_rate_stat:
         BENCHDIR / "motif_conversion_rate_stat_{sample}_{reftype}.benchmark.txt"
     shell:
         "zcat {input.pileup} | awk -F '\\t' -v target=\"{params.target_base}\" "
-        '\'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio"}} '
-        "NR>1 && ($6+$9+$7+$10+0)>0{{ "
+        '\'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio","Count_all","Unconverted_all","Depth_all","Ratio_all"}} '
+        "NR>1 && ($5+$6+$7+$8+0)>0{{ "
         "m=toupper(substr($4,15,3)); "
         'if(m ~ "^[ATGC]+$" && substr(m,2,1) == target){{ '
-        "n[m]+=1;u[m]+=$6+$7;d[m]+=$6+$9+$7+$10;r[m]+=($6+$7)/($6+$9+$7+$10)"
-        "}}}} END{{for(m in d) print m,n[m],u[m],d[m],r[m]/n[m]}}' > {output}"
+        "a=$5+$6;g=$7+$8;d=a+g;na[m]++;ua[m]+=a;da[m]+=d;ra[m]+=a/d;"
+        "if(($6+$8+0)>0){{n1[m]++;u1[m]+=$6;d1[m]+=$6+$8;r1[m]+=$6/($6+$8)}}}}"
+        "END{{for(m in da) print m,(n1[m]+0),(u1[m]+0),(d1[m]+0),(n1[m]>0?r1[m]/n1[m]:0),na[m],ua[m],da[m],ra[m]/na[m]}}' > {output}"
 
 
 rule join_pileup_table:

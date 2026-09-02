@@ -5,8 +5,8 @@ Polars-free port of merge_samples.py, using duckdb's fluent API so the logic
 reads like polars/SQL-lite instead of big raw-SQL strings.  Results are
 byte-identical to the polars implementation (regression-checked).
 
-  * each sample table (countmut TSV / legacy TSV / merged parquet) becomes a
-    relation with Chrom, Pos, Strand, Motif, Uncon, Depth
+  * each sample table (countmut native 8-column TSV / merged parquet) becomes
+    a relation with Chrom, Pos, Strand, Motif, Uncon, Depth
   * required samples  -> FULL OUTER JOIN; optional -> LEFT JOIN  (USING keys)
   * Motif = first non-null across samples; counts zero-filled; min_depth filter
   * rows sorted by (Chrom, Pos, Strand); written as parquet
@@ -43,31 +43,26 @@ def file_relation(con, path, n):
 
     with open(p, errors="replace") as fh:
         first = fh.readline()
-    if first.lstrip().startswith("chrom"):
-        rel = con.from_csv_auto(
-            p, delimiter="\t", header=True,
-            columns={"chrom": "VARCHAR", "pos": "BIGINT", "strand": "VARCHAR",
-                     "motif": "VARCHAR", "u1": "BIGINT", "m1": "BIGINT",
-                     "u2": "BIGINT", "m2": "BIGINT"},
-        ).project(
-            "chrom AS Chrom, CAST(pos AS INTEGER) AS Pos,"
-            " strand AS Strand, motif AS " + m
-            + f", (CAST(u1 AS BIGINT) + CAST(u2 AS BIGINT)) AS {u}"
-            + f", (CAST(u1 AS BIGINT) + CAST(m1 AS BIGINT)"
-            + f" + CAST(u2 AS BIGINT) + CAST(m2 AS BIGINT)) AS {d}")
-        return rel.filter(f"{d} > 0")
+    if not first.lstrip().startswith("chrom"):
+        raise ValueError(
+            f"merge_samples: unrecognized pileup header in {p!r} "
+            "(expected the countmut >= 0.2.2 native 8-column TSV: "
+            "chrom pos strand motif u0 u1 m0 m1)")
 
+    # countmut >= 0.2.2 native 8-column layout
+    # (chrom pos strand motif u0 u1 m0 m1): group 1 (u1/m1) is the legacy
+    # high-conversion gated set, so Uncon/Depth are computed from group 1
+    # only -- site detection keeps the legacy definition.
     rel = con.from_csv_auto(
-        p, delimiter="\t", header=False,
-        columns={"col0": "VARCHAR", "col1": "BIGINT", "col2": "VARCHAR",
-                 "col3": "VARCHAR", "col4": "BIGINT", "col5": "BIGINT",
-                 "col6": "BIGINT", "col7": "BIGINT", "col8": "BIGINT",
-                 "col9": "BIGINT"},
+        p, delimiter="\t", header=True,
+        columns={"chrom": "VARCHAR", "pos": "BIGINT", "strand": "VARCHAR",
+                 "motif": "VARCHAR", "u0": "BIGINT", "u1": "BIGINT",
+                 "m0": "BIGINT", "m1": "BIGINT"},
     ).project(
-        "col0 AS Chrom, CAST(col1 AS INTEGER) AS Pos,"
-        " col2 AS Strand, col3 AS " + m
-        + f", CAST(col6 AS BIGINT) AS {u}"
-        + f", CAST(col7 AS BIGINT) AS {d}")
+        "chrom AS Chrom, CAST(pos AS INTEGER) AS Pos,"
+        " strand AS Strand, motif AS " + m
+        + f", CAST(u1 AS BIGINT) AS {u}"
+        + f", (CAST(u1 AS BIGINT) + CAST(m1 AS BIGINT)) AS {d}")
     return rel.filter(f"{d} > 0")
 
 

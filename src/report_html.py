@@ -632,8 +632,11 @@ def cmd_logo(out, files):
 def cmd_motifconv(out, files):
     """Render per-motif conversion rates (table + horizontal bar chart).
 
-    Input: a TSV whose header contains a `Motif` column and a ratio column
-    (e.g. Motif/Count/Unconverted/Depth/Ratio from motif_conversion_rate_stat).
+    Input: a TSV whose header contains a `Motif` column and at least one
+    ratio column (e.g. Motif/Count/Unconverted/Depth/Ratio from
+    motif_conversion_rate_stat).  The first ratio column is the primary
+    (group 1); a second one (e.g. Ratio_all over all kept groups) is shown
+    next to it in the table.
     """
     if not files:
         print("usage: report_html.py motifconv OUT.html BY_MOTIF.tsv [...]", file=sys.stderr)
@@ -643,19 +646,22 @@ def cmd_motifconv(out, files):
         hdr, rows = _read_tsv(f)
         hdr = [h.strip() for h in hdr]
         mi = next((i for i, h in enumerate(hdr) if h.lower() == "motif"), None)
-        ri = next((i for i, h in enumerate(hdr)
-                   if "ratio" in h.lower() or "rate" in h.lower()), None)
-        if mi is None or ri is None:
+        ri_list = [i for i, h in enumerate(hdr)
+                   if "ratio" in h.lower() or "rate" in h.lower()]
+        if mi is None or not ri_list:
             print(f"[report_html] motifconv: need Motif + ratio columns in {f}",
                   file=sys.stderr)
             continue
+        ri, ri2 = ri_list[0], (ri_list[1] if len(ri_list) > 1 else None)
         tag = re.sub(r"[^A-Za-z0-9_-]", "_", Path(f).stem)
         for r in rows:
-            if len(r) <= max(mi, ri):
+            need = max([mi, ri] + ([ri2] if ri2 is not None else []))
+            if len(r) <= need:
                 continue
             m, v = r[mi].strip(), _num(r[ri])
+            v2 = _num(r[ri2]) if ri2 is not None else None
             if m and v is not None:
-                all_rows.append((tag, m, v))
+                all_rows.append((tag, m, v, v2))
     if not all_rows:
         print("[report_html] motifconv: no data rows found", file=sys.stderr)
         return 1
@@ -665,7 +671,7 @@ def cmd_motifconv(out, files):
     height = pad_t + len(all_rows) * row_h + 8
     width = 720
     svg_parts = [f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}">']
-    for i, (tag, m, v) in enumerate(all_rows):
+    for i, (tag, m, v, _v2) in enumerate(all_rows):
         y = pad_t + i * row_h
         c = PALETTE[hash(tag) % len(PALETTE)]
         bw = max(1.0, min(1.0, v) * (width - pad_l - pad_r))
@@ -677,8 +683,9 @@ def cmd_motifconv(out, files):
                          f'font-size="9" fill="#57606a">{v:.4g}</text>')
     svg_parts.append("</svg>")
 
-    groups = sorted({t for t, _, _ in all_rows})
-    rows_out = [[g] + [f"{m}: {v:.4g}" for t, m, v in all_rows if t == g] for g in groups]
+    groups = sorted({t for t, _, _, _ in all_rows})
+    rows_out = [[g] + [f"{m}: {v:.4g}" + (f" (all: {v2:.4g})" if v2 is not None else "")
+                       for t, m, v, v2 in all_rows if t == g] for g in groups]
     body = (table_html(["Source file", "Motif: ratio"], rows_out, wrap_cols={1})
             + f'<h3 style="font-size:14px;margin:14px 0 4px">Conversion rate by motif</h3>'
               f'<div class="svgwrap">{"".join(svg_parts)}</div>')

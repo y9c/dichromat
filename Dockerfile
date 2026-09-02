@@ -63,13 +63,14 @@ ENV VENV_PATH=/opt/venv
 # filter_sites.py; coralsnake >= 0.2 also declares a hard `polars` dep, so
 # pin the regular dist - installing polars-lts-cpu alongside it would give
 # two distributions providing the same `polars` module.
-# countmut >= 0.2.0: run_countmut now uses the per-base composition output
-# + src/pileup_reformat.py (the legacy --ref-base/--mut-base tiered view was
-# removed from the tool).
+# countmut >= 0.2.2: run_countmut emits the per-strand 2-group conversion
+# view (chrom pos strand motif u0 u1 m0 m1) natively via the -e group router
+# + --output-format template; the src/pileup_reformat.py bridge is retired.
+# coralsnake 0.2.1: minus-transcript SEQ/QUAL liftover fix + t2g CIGAR fixes.
 RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
     uv pip install --python ${VENV_PATH}/bin/python --no-cache \
         snakemake==9.26.1 cutseq==0.0.70 markdup==0.0.29 \
-        countmut==0.2.1 coralsnake==0.2.0 prismalign==0.2.1 \
+        countmut==0.2.2 coralsnake==0.2.1 prismalign==0.2.1 \
         duckdb==1.5.5 polars==1.33.1 scipy==1.18.1 numpy==2.5.2 pysam==0.24.0 pyyaml==6.0.3 && \
     for t in snakemake cutseq markdup countmut coralsnake prismalign; do \
         ln -s ${VENV_PATH}/bin/$t /usr/local/bin/$t; \
