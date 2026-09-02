@@ -14,6 +14,7 @@ path:
   variant: "variant"
   report_html: "/opt/app_venv/bin/python /pipeline/src/report_html.py"
   coralsnake: "coralsnake"
+  prismalign: "prismalign"
   countmut: "countmut"
   # Python scripts (use venv Python with installed packages)
   bam_tag: "/opt/app_venv/bin/python /pipeline/src/bam_tag.py"

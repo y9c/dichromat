@@ -566,8 +566,8 @@ rule index_transcript:
         BENCHDIR / "index_transcript.benchmark.txt"
     shell:
         """
-        mkdir -p {INTERNALDIR}/ref/transcript
-        {PATH.coralsnake} map --index-only --index-dir {INTERNALDIR}/ref/transcript -r {input.rf} -t {threads}
+        mkdir -p {INTERNALDIR}/ref/map_index
+        {PATH.prismalign} map -s MK --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -t {threads}
         touch {output.idx}
         """
 
@@ -582,8 +582,8 @@ rule index_genes:
         BENCHDIR / "index_genes.benchmark.txt"
     shell:
         """
-        mkdir -p {INTERNALDIR}/ref/genes
-        {PATH.coralsnake} map --index-only --index-dir {INTERNALDIR}/ref/genes -r {input.rf} -t {threads}
+        mkdir -p {INTERNALDIR}/ref/map_index
+        {PATH.prismalign} map -s MK --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -t {threads}
         touch {output.idx}
         """
 
@@ -615,19 +615,19 @@ rule mainmap_align_pe:
     benchmark:
         BENCHDIR / "mainmap_align_pe_{sample}_{rn}.benchmark.txt"
     params:
-        genes_ref=lambda wildcards, input: f"-r {input.rf1} --index-dir {INTERNALDIR}/ref/genes" if HAS_GENES else "",
+        genes_ref=lambda wildcards, input: f"-r {input.rf1}" if HAS_GENES else "",
         genes_out=lambda wildcards, output: f"-o {output.mp1}" if HAS_GENES else "",
     shell:
         """
-        {PATH.coralsnake} map \
-            -t {threads} \
-            --fwd-ref \
+        {PATH.prismalign} map \
+            -s MK -t {threads} \
+            --ref-strand fwd \
             {params.genes_ref} \
-            -r {input.rf2} --index-dir {INTERNALDIR}/ref/transcript \
+            -r {input.rf2} --index-dir {INTERNALDIR}/ref/map_index \
             -1 {input.fq1} -2 {input.fq2} \
             --min-mapping-ratio 0.8 \
-            --max-mismatches 6 \
-            --max-c2t-ratio 0.33 \
+            -m 6 \
+            --max-conversion-rates 1.0,0.33 \
             --report {output.summary} \
             {params.genes_out} \
             -o {output.mp2} \
@@ -657,19 +657,19 @@ rule mainmap_align_se:
     benchmark:
         BENCHDIR / "mainmap_align_se_{sample}_{rn}.benchmark.txt"
     params:
-        genes_ref=lambda wildcards, input: f"-r {input.rf1} --index-dir {INTERNALDIR}/ref/genes" if HAS_GENES else "",
+        genes_ref=lambda wildcards, input: f"-r {input.rf1}" if HAS_GENES else "",
         genes_out=lambda wildcards, output: f"-o {output.mp1}" if HAS_GENES else "",
     shell:
         """
-        {PATH.coralsnake} map \
-            -t {threads} \
-            --fwd-ref \
+        {PATH.prismalign} map \
+            -s MK -t {threads} \
+            --ref-strand fwd \
             {params.genes_ref} \
-            -r {input.rf2} --index-dir {INTERNALDIR}/ref/transcript \
+            -r {input.rf2} --index-dir {INTERNALDIR}/ref/map_index \
             -1 {input.fq} \
             --min-mapping-ratio 0.8 \
-            --max-mismatches 6 \
-            --max-c2t-ratio 0.33 \
+            -m 6 \
+            --max-conversion-rates 1.0,0.33 \
             --report {output.summary} \
             {params.genes_out} \
             -o {output.mp2} \
