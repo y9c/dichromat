@@ -11,12 +11,15 @@ Usage:
   report_html.py metagene OUT.html PROFILE.tsv       (coralsnake metagene --export-profile)
   report_html.py logo OUT.html MATRIX.tsv            (coralsnake logo --matrix)
   report_html.py motifconv OUT.html BY_MOTIF.tsv [...]
+  report_html.py motiffig OUT.html MOTIF_ENRICH.tsv [SAMPLE]
   report_html.py assemble OUT.html SECTION.html [SECTION.html ...]
 """
 
 import csv
 import html
+import math
 import re
+import statistics
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -696,6 +699,166 @@ def cmd_motifconv(out, files):
     print(f"[report_html] wrote {out} (motifconv, {len(all_rows)} motifs)")
 
 
+def cmd_motiffig(out, files):
+    """Render the per-motif enrichment & conversion section (final report).
+
+    Input: motif_enrich TSV (Motif Candidates Filtered Enrichment ConvHQ
+    ConvAll) + optional sample name as trailing argument.  Layout adapted
+    from the hand-made motif_figure.html: two pure-CSS row charts (A:
+    enrichment bars, B: conversion dots per read class), a per-motif
+    summary table, and a short auto-generated takeaway.
+    """
+    if not files:
+        print("usage: report_html.py motiffig OUT.html MOTIF_ENRICH.tsv [SAMPLE]",
+              file=sys.stderr)
+        return 1
+    header, rows = _read_tsv(files[0])
+    hdr = [h.strip() for h in header]
+    need = ["Motif", "Candidates", "Filtered", "Enrichment", "ConvHQ", "ConvAll"]
+    missing = [c for c in need if c not in hdr]
+    if missing:
+        print(f"[report_html] motiffig: missing columns {missing} in {files[0]}",
+              file=sys.stderr)
+        return 1
+    idx = {c: hdr.index(c) for c in need}
+    data = []
+    for r in rows:
+        if len(r) <= max(idx.values()):
+            continue
+        m = r[idx["Motif"]].strip()
+        if not m:
+            continue
+        data.append((m,
+                     _num(r[idx["Candidates"]]),
+                     _num(r[idx["Filtered"]]),
+                     _num(r[idx["Enrichment"]]),
+                     _num(r[idx["ConvHQ"]]),
+                     _num(r[idx["ConvAll"]])))
+    sample = files[1] if len(files) > 1 else ""
+    anchor = "motiffig"
+    if not data:
+        Path(out).write_text(page("Motif enrichment & conversion", sample,
+                                  f'<a href="#{anchor}">Motif enrichment</a>',
+                                  section("Motif enrichment & conversion",
+                                          '<p class="small">No filtered sites to summarize.</p>',
+                                          anchor=anchor)))
+        print(f"[report_html] wrote {out} (motiffig, empty)")
+        return 0
+
+    # -- panel A: enrichment bars (top 3 accent, rest warm) --------------------
+    maxe = max((d[3] for d in data if d[3] is not None), default=1.0) or 1.0
+    bar_rows = []
+    for i, (m, _c, _f, e, _hq, _al) in enumerate(data):
+        w = max(1.5, (e / maxe) * 100.0) if e is not None else 0.0
+        col = "var(--accent)" if i < 3 else "#d9480f"
+        ev = f"{e:.4f}" if e is not None else "-"
+        bar_rows.append(
+            f'<div style="display:grid;grid-template-columns:46px 1fr 58px;'
+            f'align-items:center;height:19px">'
+            f'<div style="font-family:ui-monospace,Menlo,Consolas,monospace;'
+            f'font-size:11px;font-weight:600;text-align:right;padding-right:8px">{esc(m)}</div>'
+            f'<div style="position:relative;height:11px;background:var(--line2);border-radius:6px">'
+            f'<div style="position:absolute;left:0;top:0;bottom:0;width:{w:.1f}%;'
+            f'background:{col};border-radius:6px;opacity:.85"></div></div>'
+            f'<div style="font-size:11px;color:var(--muted);padding-left:8px">{ev}</div></div>')
+    leg_a = ('<div style="display:flex;gap:14px;font-size:10.5px;color:var(--muted);margin:4px 0 5px">'
+             '<span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;'
+             f'background:var(--accent);margin-right:4px"></i>top 3 enriched</span>'
+             '<span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;'
+             'background:#d9480f;margin-right:4px"></i>other</span></div>')
+
+    # -- panel B: conversion dots per read class --------------------------------
+    convs = [v for d in data for v in (d[4], d[5]) if v is not None]
+    lo = max(0.0, math.floor(min(convs)) - 1.0) if convs else 0.0
+    hi = 100.0
+    if hi - lo < 1.0:
+        lo = hi - 1.0
+
+    def _px(v):
+        return (v - lo) / (hi - lo) * 100.0
+
+    dot_rows = []
+    for m, _c, _f, _e, hq, al in data:
+        d1 = (f'<div title="high-quality m1/(u1+m1) = {hq:.2f}%" '
+              f'style="position:absolute;left:{_px(hq):.1f}%;top:1px;width:7px;height:7px;'
+              f'border-radius:50%;background:var(--fg);transform:translateX(-50%)"></div>'
+              if hq is not None else "")
+        d2 = (f'<div title="all reads (m1+m0)/(u1+u0+m1+m0) = {al:.2f}%" '
+              f'style="position:absolute;left:{_px(al):.1f}%;bottom:1px;width:7px;height:7px;'
+              f'border-radius:50%;background:var(--muted);transform:translateX(-50%)"></div>'
+              if al is not None else "")
+        right = f"{hq:.2f}" if hq is not None else "-"
+        dot_rows.append(
+            f'<div style="display:grid;grid-template-columns:46px 1fr 58px;'
+            f'align-items:center;height:19px">'
+            f'<div style="font-family:ui-monospace,Menlo,Consolas,monospace;'
+            f'font-size:11px;font-weight:600;text-align:right;padding-right:8px">{esc(m)}</div>'
+            f'<div style="position:relative;height:14px">{d1}{d2}</div>'
+            f'<div style="font-size:11px;color:var(--muted);padding-left:8px">{right}</div></div>')
+    mid = (lo + hi) / 2
+    axis = (f'<div style="margin-top:4px;display:grid;grid-template-columns:46px 1fr;gap:8px">'
+            f'<div></div>'
+            f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;font-size:10px;color:var(--muted)">'
+            f'<span>{lo:.0f}%</span><span style="text-align:center">{mid:.0f}%</span>'
+            f'<span style="text-align:right">100% conversion</span></div></div>')
+    leg_b = ('<div style="display:flex;gap:14px;font-size:10.5px;color:var(--muted);margin:4px 0 5px">'
+             '<span><i style="display:inline-block;width:8px;height:8px;border-radius:50%;'
+             'background:var(--fg);margin-right:4px"></i>high-quality (m1)</span>'
+             '<span><i style="display:inline-block;width:8px;height:8px;border-radius:50%;'
+             'background:var(--muted);margin-right:4px"></i>all reads (m1+m0)</span></div>')
+
+    panel_a = (f'<div><h3 style="font-size:13.5px;margin:0 0 2px">A &middot; enrichment by motif '
+               f'<span class="small" style="font-weight:400">per 1,000 genomic candidates</span></h3>'
+               f'{leg_a}{"".join(bar_rows)}</div>')
+    panel_b = (f'<div><h3 style="font-size:13.5px;margin:0 0 2px">B &middot; conversion by read class '
+               f'<span class="small" style="font-weight:400">depth-weighted, all candidates</span></h3>'
+               f'{leg_b}{"".join(dot_rows)}{axis}</div>')
+    panels = (f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:10px 0 4px">'
+              f'{panel_a}{panel_b}</div>')
+
+    # -- panel C: summary table + takeaway --------------------------------------
+    trows = [[m,
+              f"{c:,.0f}" if c is not None else "-",
+              f"{f_:,.0f}" if f_ is not None else "-",
+              f"{e:.4f}" if e is not None else "-",
+              f"{hq:.2f}" if hq is not None else "-",
+              f"{al:.2f}" if al is not None else "-"]
+             for m, c, f_, e, hq, al in data]
+    tbl = table_html(["Motif", "Genomic candidates", "Filtered sites",
+                      "Enrichment ‰", "Conv % (high-qual)", "Conv % (all reads)"],
+                     trows)
+    tot_f = int(sum(d[2] for d in data if d[2] is not None))
+    top3 = ", ".join(f"{d[0]} ({d[3]:.3f} ‰)" for d in data[:3] if d[3] is not None)
+    raw = max(data, key=lambda d: d[2] if d[2] is not None else 0)
+    hqs = [d[4] for d in data if d[4] is not None]
+    als = [d[5] for d in data if d[5] is not None]
+    takeaway = (f"Top enriched motifs: {top3}. By raw count, {raw[0]} carries the most "
+                f"filtered sites ({int(raw[2] or 0):,}). Median conversion across motifs: "
+                f"{statistics.median(hqs):.1f}% (high-quality reads) / "
+                f"{statistics.median(als):.1f}% (all reads), depth-weighted over genomic candidates.")
+    callout = (f'<div style="border-left:3px solid var(--accent);background:var(--chip);'
+               f'padding:8px 12px;margin-top:12px;font-size:12.5px;line-height:1.5">'
+               f'<b>Takeaway.</b> {takeaway}</div>')
+    note = ('<p class="small" style="margin:8px 0 0">'
+            "Enrichment = filtered sites (p &lt; 1) per 1,000 genomic candidates carrying the "
+            "3-mer. Conversion = target-base rate depth-weighted over all candidates: "
+            "high-quality = m1/(u1+m1); all reads = (m1+m0)/(u1+u0+m1+m0).</p>")
+    src = (f'<p class="small" style="margin-top:10px;color:var(--muted)">source &middot; '
+           f'by_motif {esc(sample)}.genome.tsv + filtered.tsv &middot; 3-mer centered on the '
+           f'target base (T&rarr;U) &middot; dichromat pipeline</p>')
+    body = (note + panels
+            + '<h3 style="font-size:13.5px;margin:14px 0 4px">C &middot; per-motif summary '
+              '<span class="small" style="font-weight:400">enrichment &amp; conversion</span></h3>'
+            + tbl
+            + f'<p class="small" style="margin-top:6px">Total filtered sites: {tot_f:,}</p>'
+            + callout + src)
+    Path(out).write_text(page("Motif enrichment & conversion", sample,
+                              f'<a href="#{anchor}">Motif enrichment</a>',
+                              section("Motif enrichment & conversion", body, anchor=anchor)
+                              + "\n" + TINY_JS))
+    print(f"[report_html] wrote {out} (motiffig, {len(data)} motifs)")
+
+
 def _body_ids(bodies):
     """Collect stable element ids from rendered bodies for the TOC."""
     ids = ["overview"]
@@ -750,6 +913,8 @@ def main():
             cmd_logo(out, rest)
         elif mode == "motifconv":
             cmd_motifconv(out, rest)
+        elif mode == "motiffig":
+            cmd_motiffig(out, rest)
         else:
             print(f"unknown mode {mode}", file=sys.stderr)
             return 1

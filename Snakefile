@@ -202,6 +202,8 @@ This directory contains intermediate files for the `dichromat` pipeline.
 - `stats/ratio/by_motif/`: Global conversion ratios grouped by 3-mer motifs.
 - `stats/mqc/reads/`: Summaries for the Mapping report.
 - `stats/mqc/sites/`: Summaries for the Site report.
+- `stats/report/`: Metagene / logo / motif-enrichment profiles and the
+  rendered HTML sections consumed by `final_report`.
 
 ### 5. `pileup/`
 - `pileup/per_sample/`: Site-level data (tsv.gz) for each sample.
@@ -1550,6 +1552,34 @@ rule generate_motifconv_report:
         "{PATH.report_html} motifconv {output} {input}"
 
 
+rule generate_motif_enrich:
+    """Per-motif enrichment & conversion summary (genome candidates vs
+    filtered sites): one row per 3-mer with candidates, filtered count,
+    enrichment per 1,000 candidates and depth-weighted conversion
+    (high-quality vs all reads) from the 8-column countmut pileup."""
+    input:
+        by_motif=INTERNALDIR / "stats/ratio/by_motif/{sample}.genome.tsv",
+        filtered="report_sites/filtered.tsv",
+    output:
+        tsv=INTERNALDIR / "stats/report/motif_enrich.{sample}.tsv",
+    benchmark:
+        BENCHDIR / "generate_motif_enrich_{sample}.benchmark.txt"
+    shell:
+        "{PATH.motif_enrich} -i {input.by_motif} -f {input.filtered} -s {wildcards.sample} -o {output.tsv}"
+
+
+rule generate_motif_enrich_report:
+    """Render the motif enrichment section of the final report (one per sample)."""
+    input:
+        tsv=rules.generate_motif_enrich.output.tsv,
+    output:
+        html=INTERNALDIR / "stats/report/motif_enrich.{sample}.html",
+    benchmark:
+        BENCHDIR / "generate_motif_enrich_report_{sample}.benchmark.txt"
+    shell:
+        "{PATH.report_html} motiffig {output.html} {input.tsv} {wildcards.sample}"
+
+
 rule final_report:
     """Assemble one self-contained report.html from all per-section HTML."""
     input:
@@ -1563,6 +1593,10 @@ rule final_report:
             sample=SAMPLE2DATA.keys(),
             reftype=["transcript", "genome"],
         ),
+        expand(
+            rules.generate_motif_enrich_report.output,
+            sample=SAMPLE2DATA.keys(),
+        ) if IS_ETAM else [],
     output:
         "report.html",
     benchmark:
