@@ -1413,6 +1413,74 @@ rule generate_site_report:
         "{PATH.report_html} tables {output} {input}"
 
 
+rule generate_metagene_profile:
+    """Metagene coverage distribution of the remapped sites (machine-readable)."""
+    input:
+        sites="report_sites/sites.tsv.gz",
+        gtf=REF["genome"]["gtf"],
+    output:
+        prof=INTERNALDIR / "stats/report/metagene_profile.tsv",
+    threads: 8
+    benchmark:
+        BENCHDIR / "generate_metagene_profile.benchmark.txt"
+    shell:
+        """
+        {PATH.coralsnake} metagene -i {input.sites} -g {input.gtf} -H \
+            --meta-columns 1,2,3 --bins 100 --export-profile {output.prof}
+        """
+
+
+rule generate_logo_matrix:
+    """Sequence-context logo around remapped sites (matrix, not a figure).
+
+    Uses the per-site context already present in the sites table (`Motif`
+    column), weighted by total depth across libraries.
+    """
+    input:
+        sites="report_sites/sites.tsv.gz",
+    output:
+        matrix=INTERNALDIR / "stats/report/logo_matrix.tsv",
+    threads: 8
+    benchmark:
+        BENCHDIR / "generate_logo_matrix.benchmark.txt"
+    shell:
+        """
+        zcat {input.sites} \
+          | awk -F '\\t' 'NR==1{{for(i=7;i<=NF;i++) if($$i ~ /^Depth_/) d[i]=1; next}} \
+              {{s=0; for(i in d) s+=$$i; if($$6 ~ /^[ACGTUNn]+$$/ && s>0) print $$6 "\\t" s}}' \
+          | {PATH.coralsnake} logo -i - --matrix {output.matrix}
+        """
+
+
+rule generate_sites_extra_report:
+    """Render metagene coverage + sequence logo sections (sample-independent)."""
+    input:
+        prof=rules.generate_metagene_profile.output.prof,
+        matrix=rules.generate_logo_matrix.output.matrix,
+    output:
+        meta=INTERNALDIR / "stats/report/metagene.html",
+        logo=INTERNALDIR / "stats/report/logo.html",
+    benchmark:
+        BENCHDIR / "generate_sites_extra_report.benchmark.txt"
+    shell:
+        """
+        {PATH.report_html} metagene {output.meta} {input.prof}
+        {PATH.report_html} logo {output.logo} {input.matrix}
+        """
+
+
+rule generate_motifconv_report:
+    """Per-motif conversion-rate section (one per sample x reftype)."""
+    input:
+        INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
+    output:
+        INTERNALDIR / "stats/report/motif.{sample}.{reftype}.html",
+    benchmark:
+        BENCHDIR / "generate_motifconv_report_{sample}_{reftype}.benchmark.txt"
+    shell:
+        "{PATH.report_html} motifconv {output} {input}"
+
+
 rule final_report:
     """Assemble one self-contained report.html from all per-section HTML."""
     input:
@@ -1420,6 +1488,12 @@ rule final_report:
         "report_reads/unmapped.html",
         "report_reads/mapping.html",
         "report_sites/sites.html",
+        rules.generate_sites_extra_report.output,
+        expand(
+            rules.generate_motifconv_report.output,
+            sample=SAMPLE2DATA.keys(),
+            reftype=["transcript", "genome"],
+        ),
     output:
         "report.html",
     benchmark:

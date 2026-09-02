@@ -8,6 +8,9 @@ falco fastqc_data.txt / summary.txt, the mqc_* TSV tables and HISAT2-style
 Usage:
   report_html.py qc OUT.html fastqc_data.txt [fastqc_data.txt ...]
   report_html.py tables OUT.html [FILE ...]          (.tsv -> table, .summary -> block)
+  report_html.py metagene OUT.html PROFILE.tsv       (coralsnake metagene --export-profile)
+  report_html.py logo OUT.html MATRIX.tsv            (coralsnake logo --matrix)
+  report_html.py motifconv OUT.html BY_MOTIF.tsv [...]
   report_html.py assemble OUT.html SECTION.html [SECTION.html ...]
 """
 
@@ -450,6 +453,242 @@ def cmd_tables(out, files):
     print(f"[report_html] wrote {out} ({len(files)} tables)")
 
 
+# ---------------------------------------------------------------------------
+# metagene profile / sequence logo / motif conversion  (matrix -> inline SVG)
+# ---------------------------------------------------------------------------
+def _read_tsv(path):
+    with open(path, newline="", errors="replace") as fh:
+        rows = list(csv.reader(fh, delimiter="\t"))
+    return rows[0], [r for r in rows[1:] if any(c.strip() for c in r)]
+
+
+def cmd_metagene(out, files):
+    """Render a metagene coverage-distribution chart from a profile matrix TSV.
+
+    Input (from `coralsnake metagene --export-profile`): columns
+    feature_type, feature_midpoint, count[_<name>]...
+    """
+    if not files:
+        print("usage: report_html.py metagene OUT.html PROFILE.tsv", file=sys.stderr)
+        return 1
+    header, rows = _read_tsv(files[0])
+    hdr = [h.strip() for h in header]
+    if "feature_midpoint" not in hdr:
+        print(f"[report_html] metagene: no feature_midpoint column in {files[0]}", file=sys.stderr)
+        return 1
+    xj = hdr.index("feature_midpoint")
+    ycols = [j for j, h in enumerate(hdr) if j != xj and h.startswith("count")]
+    tcol = hdr.index("feature_type") if "feature_type" in hdr else None
+
+    # region boundaries in normalized position (transitions of feature_type)
+    def _splits():
+        if tcol is None:
+            return []
+        up5 = [float(r[xj]) for r in rows if r[tcol].strip() == "5UTR"]
+        dn3 = [float(r[xj]) for r in rows if r[tcol].strip() == "3UTR"]
+        b = []
+        if up5:
+            b.append(max(up5))
+        if dn3:
+            b.append(min(dn3))
+        return sorted(b)
+
+    splits = _splits()
+    series = []
+    for j in ycols:
+        label = hdr[j].removeprefix("count").lstrip("_") or "coverage"
+        pts = []
+        for r in rows:
+            x, y = _num(r[xj]), _num(r[j]) if j < len(r) else None
+            if x is not None and y is not None:
+                pts.append((x, y))
+        if len(pts) > 1:
+            series.append((label, pts))
+    body = ""
+    if series:
+        if len(series) == 1:
+            body = svg_line(series[0][1], ylab="Density",
+                            xlab="Normalized gene position")
+        else:
+            body = svg_multi(series, ylab="Density",
+                             xlab="Normalized gene position")
+    if body and splits:
+        # overlay the 5'UTR / CDS / 3'UTR region band + labels
+        marks = ""
+        names = ["5'UTR", "CDS"] + (["3'UTR"] if len(splits) > 1 else [])
+        edges = [0.0] + splits + [1.0]
+        for i, (a, b) in enumerate(zip(edges, edges[1:])):
+            mid = (a + b) / 2
+            marks += (f'<text x="{40 + mid * 680:.0f}" y="16" text-anchor="middle" '
+                      f'font-size="10" font-weight="bold" fill="#57606a">{esc(names[i])}</text>')
+        marks += "".join(f'<line x1="{40 + s * 680:.0f}" y1="20" x2="{40 + s * 680:.0f}" y2="190" '
+                         f'stroke="#c92a2a" stroke-dasharray="4,3" stroke-width="1.5"/>'
+                         for s in splits)
+        body = body.replace("<svg ", f'<svg style="position:relative" ', 1).replace(
+            "</svg>", f"{marks}</svg>", 1)
+    if not body:
+        body = '<p class="small">No metagene profile points to render.</p>'
+    nav = f'<a href="#metagene">Metagene</a>'
+    Path(out).write_text(page("Metagene coverage", "", nav,
+                              section("Metagene coverage distribution",
+                                      f'<div class="svgwrap">{body}</div>',
+                                      anchor="metagene")))
+    print(f"[report_html] wrote {out} (metagene)")
+
+
+_LOGO_GLYPHS = {
+    # unit-square polygons (x right, y up), simple legible letter shapes
+    "A": [(0, 0), (0.35, 1), (0.65, 1), (1, 0), (0.72, 0), (0.63, 0.30),
+          (0.37, 0.30), (0.28, 0)],
+    "C": [(1, 0.85), (1, 1), (0.5, 1), (0, 0.5), (0.5, 0), (1, 0), (1, 0.15),
+          (0.55, 0.15), (0.18, 0.5), (0.55, 0.85)],
+    "G": [(1, 0.85), (1, 1), (0.5, 1), (0, 0.5), (0.5, 0), (1, 0), (1, 0.15),
+          (0.55, 0.15), (0.18, 0.5), (0.55, 0.85), (0.45, 0.40), (1, 0.40),
+          (1, 0.58), (0.55, 0.58)],
+    "T": [(0.05, 1), (0.95, 1), (0.95, 0.78), (0.58, 0.78), (0.58, 0),
+          (0.42, 0), (0.42, 0.78), (0.05, 0.78)],
+    "U": [(0.05, 1), (0.25, 1), (0.25, 0.15), (0.35, 0.02), (0.65, 0.02),
+          (0.75, 0.15), (0.75, 1), (0.95, 1), (0.95, 0.12), (0.80, 0),
+          (0.20, 0), (0.05, 0.12)],
+    "N": [(0.08, 0), (0.92, 0), (0.92, 1), (0.08, 1)],
+}
+_LOGO_COLORS = {"A": "#d9480f", "C": "#0b7285", "G": "#e8590c", "T": "#2b8a3e",
+                "U": "#2b8a3e", "N": "#57606a"}
+
+
+def cmd_logo(out, files):
+    """Render an inline SVG sequence logo from a position x base matrix TSV.
+
+    Input (from `coralsnake logo --matrix`): header `position A C G T U ...`,
+    one row per position, values = per-base score.
+    """
+    if not files:
+        print("usage: report_html.py logo OUT.html MATRIX.tsv", file=sys.stderr)
+        return 1
+    header, rows = _read_tsv(files[0])
+    hdr = [h.strip().upper() for h in header]
+    base_cols = [(j, h) for j, h in enumerate(hdr)
+                 if j > 0 and h in _LOGO_GLYPHS]
+    if not base_cols or not rows:
+        print(f"[report_html] logo: no base columns found in {files[0]}", file=sys.stderr)
+        return 1
+    ncols, nrows = len(base_cols), len(rows)
+    colw, colh, pad_l, pad_b, pad_t = 34, 160, 22, 26, 12
+    # x-axis advances per POSITION (one row of the matrix), not per base column
+    width = pad_l + nrows * colw + 14
+    height = pad_t + colh + pad_b
+
+    # per-column max (y-scale is per column: heights sum to the tallest column)
+    def _col_scores(r):
+        d = {}
+        for j, b in base_cols:
+            v = _num(r[j]) if j < len(r) else None
+            if v and v > 0:
+                d[b] = v
+        return d
+
+    col_scores = [_col_scores(r) for r in rows]
+    ymax = max((sum(d.values()) for d in col_scores), default=1.0) or 1.0
+    yscale = colh / ymax
+
+    parts = [f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}">']
+    # baseline + y ticks
+    y0 = pad_t + colh
+    parts.append(f'<line x1="{pad_l}" y1="{y0}" x2="{width - 6}" y2="{y0}" stroke="#999"/>')
+    for i in range(5):
+        gy = pad_t + colh * i / 4
+        parts.append(f'<line x1="{pad_l - 3}" y1="{gy:.1f}" x2="{pad_l}" y2="{gy:.1f}" stroke="#999"/>')
+        parts.append(f'<text x="{pad_l - 5}" y="{gy + 3:.1f}" text-anchor="end" '
+                     f'font-size="8.5" fill="#8f9aa4">{ymax * (1 - i / 4):.4g}</text>')
+    for ci, d in enumerate(col_scores):
+        x0 = pad_l + ci * colw + colw * 0.12
+        w = colw * 0.76
+        y = y0
+        for b, v in sorted(d.items(), key=lambda kv: -kv[1]):
+            h = v * yscale
+            if h < 0.4:
+                continue
+            glyph = _LOGO_GLYPHS.get(b) or _LOGO_GLYPHS["A"]
+            pts = " ".join(f"{x0 + gx * w:.2f},{y - gy * h:.2f}" for gx, gy in glyph)
+            color = _LOGO_COLORS.get(b, "#57606a")
+            parts.append(f'<polygon points="{pts}" fill="{color}" opacity="0.92"/>')
+            y -= h
+        pos = _num(rows[ci][0])
+        if pos is not None:
+            parts.append(f'<text x="{x0 + w / 2:.1f}" y="{y0 + 12}" text-anchor="middle" '
+                         f'font-size="8.5" fill="#8f9aa4">{pos:.0f}</text>')
+    parts.append("</svg>")
+    legend = "".join(f'<legend><i style="background:{_LOGO_COLORS[b]}"></i>{esc(b)}</legend>'
+                     for b in [h for _, h in base_cols])
+    nav = '<a href="#logo">Logo</a>'
+    Path(out).write_text(page("Sequence logo", "", nav,
+                              section(f"Sequence logo ({nrows} positions)",
+                                      f'<div class="svgwrap">{"".join(parts)}</div>'
+                                      f'<div style="padding:4px 2px">{legend}</div>',
+                                      anchor="logo")))
+    print(f"[report_html] wrote {out} (logo, {nrows} positions x {len(base_cols)} bases)")
+
+
+def cmd_motifconv(out, files):
+    """Render per-motif conversion rates (table + horizontal bar chart).
+
+    Input: a TSV whose header contains a `Motif` column and a ratio column
+    (e.g. Motif/Count/Unconverted/Depth/Ratio from motif_conversion_rate_stat).
+    """
+    if not files:
+        print("usage: report_html.py motifconv OUT.html BY_MOTIF.tsv [...]", file=sys.stderr)
+        return 1
+    all_rows = []
+    for f in files:
+        hdr, rows = _read_tsv(f)
+        hdr = [h.strip() for h in hdr]
+        mi = next((i for i, h in enumerate(hdr) if h.lower() == "motif"), None)
+        ri = next((i for i, h in enumerate(hdr)
+                   if "ratio" in h.lower() or "rate" in h.lower()), None)
+        if mi is None or ri is None:
+            print(f"[report_html] motifconv: need Motif + ratio columns in {f}",
+                  file=sys.stderr)
+            continue
+        tag = re.sub(r"[^A-Za-z0-9_-]", "_", Path(f).stem)
+        for r in rows:
+            if len(r) <= max(mi, ri):
+                continue
+            m, v = r[mi].strip(), _num(r[ri])
+            if m and v is not None:
+                all_rows.append((tag, m, v))
+    if not all_rows:
+        print("[report_html] motifconv: no data rows found", file=sys.stderr)
+        return 1
+
+    # bar chart (one row per motif, grouped per source file)
+    bar_w, row_h, pad_l, pad_r, pad_t = 8, 20, 96, 56, 8
+    height = pad_t + len(all_rows) * row_h + 8
+    width = 720
+    svg_parts = [f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}">']
+    for i, (tag, m, v) in enumerate(all_rows):
+        y = pad_t + i * row_h
+        c = PALETTE[hash(tag) % len(PALETTE)]
+        bw = max(1.0, min(1.0, v) * (width - pad_l - pad_r))
+        svg_parts.append(f'<text x="{pad_l - 6}" y="{y + row_h * 0.68}" text-anchor="end" '
+                         f'font-size="9.5" fill="var(--fg)">{esc(m)}</text>')
+        svg_parts.append(f'<rect x="{pad_l}" y="{y + 3}" width="{bw:.1f}" '
+                         f'height="{row_h - 7}" rx="2" fill="{c}" opacity="0.85"/>')
+        svg_parts.append(f'<text x="{pad_l + bw + 5:.1f}" y="{y + row_h * 0.68}" '
+                         f'font-size="9" fill="#57606a">{v:.4g}</text>')
+    svg_parts.append("</svg>")
+
+    groups = sorted({t for t, _, _ in all_rows})
+    rows_out = [[g] + [f"{m}: {v:.4g}" for t, m, v in all_rows if t == g] for g in groups]
+    body = (table_html(["Source file", "Motif: ratio"], rows_out, wrap_cols={1})
+            + f'<h3 style="font-size:14px;margin:14px 0 4px">Conversion rate by motif</h3>'
+              f'<div class="svgwrap">{"".join(svg_parts)}</div>')
+    nav = '<a href="#motifconv">Motif conversion</a>'
+    Path(out).write_text(page("Motif conversion rate", "", nav,
+                              section("Motif conversion rate", body,
+                                      anchor="motifconv")))
+    print(f"[report_html] wrote {out} (motifconv, {len(all_rows)} motifs)")
+
+
 def _body_ids(bodies):
     """Collect stable element ids from rendered bodies for the TOC."""
     ids = ["overview"]
@@ -498,6 +737,12 @@ def main():
             cmd_tables(out, rest)
         elif mode == "assemble":
             cmd_assemble(out, rest)
+        elif mode == "metagene":
+            cmd_metagene(out, rest)
+        elif mode == "logo":
+            cmd_logo(out, rest)
+        elif mode == "motifconv":
+            cmd_motifconv(out, rest)
         else:
             print(f"unknown mode {mode}", file=sys.stderr)
             return 1
