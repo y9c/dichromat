@@ -1157,10 +1157,70 @@ rule cal_spike_ratio:
         """
 
 
-rule run_countmut:
+rule countmut_composition:
+    """countmut >= 0.2.0: per-base composition table (chrom pos strand ref depth a c g t n).
+
+    The legacy --ref-base/--mut-base tiered view no longer exists; keep only
+    the target-base sites (all the downstream pileup steps need) via the Lua
+    site filter (-p).  countmut >= 0.2 also dropped the dedicated read-QC
+    flags, so the legacy 0.0.8 read gate (the pipeline's historical defaults:
+    NS<=1, Yf>=1, Zf<=3, baseq>=20, 2bp/2bp read-end trim; mapq>=0 is a no-op)
+    is re-expressed as the Lua read filter (-e).  A failing read contributes
+    no bases at all -- exactly what 0.0.8 did (it discarded failing reads
+    before counting; its u2/m2 "insufficient conversion" bins were dead code
+    and always 0, so the emitted u1/m1 covered exactly this read set).
+    """
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
         bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
+        ref=lambda wildcards: (
+            INTERNALDIR / "ref/transcript.fa"
+            if wildcards.reftype == "transcript"
+            else (
+                INTERNALDIR / "ref/genes.fa"
+                if wildcards.reftype == "genes"
+                else REF["genome"]["fa"]
+            )
+        ),
+    output:
+        temp(TEMPDIR / "pileup/{sample}.{reftype}.composition.tsv"),
+    params:
+        site_filter=lambda wildcards: (
+            "ref == 'C'" if config.get("pileup_ct", False) else "ref == 'A'"
+        ),
+        # Legacy 0.0.8 read acceptance, now a Lua expression (0.0.8 defaults:
+        # max_sub=1, min_con=1, max_unc=3, min_baseq=20, trim 2/2, min_mapq=0).
+        # With equal trims the legacy per-strand condition reduces to
+        # `qpos >= trim and qlen - qpos > trim` on both strands.
+        # NOTE: the 0.0.8 conversion gate reads the Yf/Zf (forward-channel)
+        # tags even for the C->T view -- kept here for parity.
+        read_gate=lambda: (
+            "tag('NS') <= {} and tag('Yf') >= {} and tag('Zf') <= {}"
+            " and bq >= {} and qpos >= {} and qlen - qpos > {}"
+        ).format(
+            config.get("countmut_max_sub", 1),
+            config.get("countmut_min_con", 1),
+            config.get("countmut_max_unc", 3),
+            config.get("countmut_min_baseq", 20),
+            config.get("countmut_trim", 2),
+            config.get("countmut_trim", 2),
+        ),
+    threads: 64
+    benchmark:
+        BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
+    shell:
+        "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} -p \"{params.site_filter}\" -e \"{params.read_gate}\" > /dev/null"
+
+
+rule run_countmut:
+    """Rewrite the composition table into the legacy 10-column pileup layout
+    (chrom pos strand motif u0 u1 u2 m0 m1 m2) so the pileup consumers
+    (unfilter_genes_stat / motif_conversion_rate_stat / merge_samples) are
+    unchanged.  u1 = reference-base count (default A), m1 = mutation-base
+    count (default G); u0/u2/m0/m2 = 0 (countmut >= 0.2 has no quality
+    tiers)."""
+    input:
+        composition=TEMPDIR / "pileup/{sample}.{reftype}.composition.tsv",
         ref=lambda wildcards: (
             INTERNALDIR / "ref/transcript.fa"
             if wildcards.reftype == "transcript"
@@ -1175,11 +1235,8 @@ rule run_countmut:
     params:
         ref_base=lambda wildcards: "C" if config.get("pileup_ct", False) else "A",
         mut_base=lambda wildcards: "T" if config.get("pileup_ct", False) else "G",
-    threads: 64
-    benchmark:
-        BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
     shell:
-        "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} --ref-base {params.ref_base} --mut-base {params.mut_base} -f > /dev/null"
+        "{PATH.pileup_reformat} -i {input.composition} -r {input.ref} --ref-base {params.ref_base} --mut-base {params.mut_base} -o {output}"
 
 
 rule pileup_base:

@@ -1,5 +1,5 @@
 # Use ARGs for versions
-ARG SAMTOOLS_VERSION="1.23"
+ARG SAMTOOLS_VERSION="1.24"
 ARG FALCO_VERSION="2.0.1"
 ARG PYTHON_VERSION_FOR_APP="3.13"
 
@@ -59,13 +59,18 @@ ENV VENV_PATH=/opt/venv
 
 # Core libraries + CLI tools (all in one env)
 # NOTE: MultiQC was removed/replaced by the lightweight src/report_html.py.
-# polars-lts-cpu provides the `polars` module that src/*.py use directly
-# (scan_csv/scan_parquet/sink_parquet/...).
+# `polars` (regular dist, pinned): the only remaining src/*.py consumer is
+# filter_sites.py; coralsnake >= 0.2 also declares a hard `polars` dep, so
+# pin the regular dist - installing polars-lts-cpu alongside it would give
+# two distributions providing the same `polars` module.
+# countmut >= 0.2.0: run_countmut now uses the per-base composition output
+# + src/pileup_reformat.py (the legacy --ref-base/--mut-base tiered view was
+# removed from the tool).
 RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
     uv pip install --python ${VENV_PATH}/bin/python --no-cache \
-        snakemake==9.16.3 cutseq==0.0.70 markdup==0.0.27 \
-        countmut==0.0.8 coralsnake==0.2.0 prismalign==0.2.1 \
-        duckdb==1.5.5 polars-lts-cpu==1.33.1 scipy==1.17.1 numpy==2.4.2 pysam==0.23.3 pyyaml && \
+        snakemake==9.26.1 cutseq==0.0.70 markdup==0.0.29 \
+        countmut==0.2.1 coralsnake==0.2.0 prismalign==0.2.1 \
+        duckdb==1.5.5 polars==1.33.1 scipy==1.18.1 numpy==2.5.2 pysam==0.24.0 pyyaml==6.0.3 && \
     for t in snakemake cutseq markdup countmut coralsnake prismalign; do \
         ln -s ${VENV_PATH}/bin/$t /usr/local/bin/$t; \
     done && \
@@ -140,7 +145,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     fi && \
     apt-get update && \
     apt-get -y --no-install-recommends install \
-    ca-certificates zlib1g libbz2-1.0 liblzma5 && \
+    ca-certificates zlib1g libbz2-1.0 liblzma5 liblua5.4-0 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy only necessary folders/bins from builder to keep size minimal
