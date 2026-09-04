@@ -1,19 +1,48 @@
+"""dichromat pipeline DAG.
+
+General conversion-based RNA-seq pipeline (eTAM-seq / CAM-seq / GLORI /
+BS-seq, etc.).  High-level phases:
+
+  1. Reference & index preparation
+     combine_contamination_fa / combine_genes_fa / prepared_transcript_ref
+     build_contamination_hisat3n_index / index_transcript / index_genes
+  2. Trimming & read QC
+     trim_se / trim_pe / qc_trimmed / report_qc_trimmed
+  3. Competitive mapping cascade
+     premap_align_* (contamination) -> mainmap_align_* (genes+transcript)
+     -> remap_align_* (genome)
+  4. BAM merge + dedup + stats
+     combine_bams / drop_duplicates / stat_* / count_reads
+  5. Site calling & table merge/remap
+     run_countmut / pileup_base / join_pileup_table
+     merge_gene_and_genome_table / filter_eTAM_sites
+  6. Site/read report generation
+     mqc_aggregate_* / generate_*_report / final_report
+
+All rules share the resolved `config`, `PATH` (SimpleNamespace of tool
+commands) and path constants (INTERNALDIR / TEMPDIR / BENCHDIR).
+"""
+
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 import os
 import yaml
 
-# Load default config
+
+# ---------------------------------------------------------------------------
+# Config loading & merging
+# ---------------------------------------------------------------------------
+
+# Start from the packaged defaults, then layer the user config on top.
 with open(Path(workflow.basedir) / "default.yaml") as f:
     merged_config = yaml.safe_load(f)
 
-# Merge with user config (deep merge for 'path' dictionary)
-# We store user overrides first
+# `path` and `reference` are deep-merged (dict.update); everything else is a
+# plain top-level override.
 user_config = dict(config)
 user_path = user_config.get("path", {})
 
-# Apply user overrides to merged_config
 for k, v in user_config.items():
     if k == "path" and isinstance(v, dict):
         merged_config["path"].update(v)
@@ -24,58 +53,74 @@ for k, v in user_config.items():
 
 config = merged_config
 
-# Flatten reference into top-level config for backward compatibility with rules
+# Flatten `reference` into top-level config so rules can use `config[<key>]`
+# directly (backward compatibility).
 if "reference" in config:
     for k, v in config["reference"].items():
         if k not in config:
             config[k] = v
 
-# Determine BATCH name
+
+# ---------------------------------------------------------------------------
+# Batch / sample metadata
+# ---------------------------------------------------------------------------
+
 BATCH = config.get("batch", "dichromat_run")
 IS_ETAM = config.get("is_etam", "eTAM" in BATCH)
 SKIP_SAMPLES = config.get("skip_samples", [])
 
-# Detect if we are running inside the dichromat container
+
+# ---------------------------------------------------------------------------
+# Container handling
+# ---------------------------------------------------------------------------
+
+# Detect whether we are already running inside the dichromat container.
 INSIDE_CONTAINER = os.environ.get("PIPELINE_HOME") == "/pipeline"
 
-# If running in a container, we should use the default tool names
-# which are correctly set up in the container's PATH.
+# When using a container, the tool commands baked into the container PATH are
+# authoritative, so we revert `path` to the packaged defaults.  Any explicit
+# user `path` overrides are preserved (e.g. a bind-mounted repo copy of a
+# Python script that fixes a stale-container bug).
 if config.get("container") or INSIDE_CONTAINER:
-    # Revert 'path' to defaults if using a container
     with open(Path(workflow.basedir) / "default.yaml") as f:
         clean_defaults = yaml.safe_load(f)
+        user_path = config.get("path", {})
         config["path"] = clean_defaults.get("path", {})
+        config["path"].update(user_path)
 
-
-# Resolve container path to absolute if relative
+# Resolve a relative container path against the Snakefile directory.
 CONTAINER = config.get("container")
 if CONTAINER and not os.path.isabs(CONTAINER):
     CONTAINER = os.path.normpath(os.path.join(workflow.basedir, CONTAINER))
 
-
-# Container directive for rules
-# If already inside the container, we MUST set this to None to avoid nesting
+# Container directive for every rule.  If already inside the container we MUST
+# set this to None to avoid nesting.
 container: None if INSIDE_CONTAINER else CONTAINER
 
 
 def resolve_config_path(p):
+    """Resolve a (possibly relative / ~-expanded) path to an absolute path."""
     if not p or not isinstance(p, str) or os.path.isabs(p):
         return p
     p = os.path.expanduser(p)
-    # 1. Try relative to CWD (User workspace or where they ran the command)
+    # 1. Relative to CWD (user workspace or where the command was run).
     if os.path.exists(p):
         return os.path.abspath(p)
-    # 2. Try relative to project root (passed from dichromat.sh or Snakefile dir)
+    # 2. Relative to the project root (from dichromat.sh or the Snakefile dir).
     base = config.get("project_dir", workflow.basedir)
     p_joined = os.path.join(base, p)
     if os.path.exists(p_joined):
         return os.path.normpath(p_joined)
-    # 3. Fallback to abspath from CWD
+    # 3. Fallback to abspath from CWD.
     return os.path.abspath(p)
 
 
+# ---------------------------------------------------------------------------
+# Global path constants & flags
+# ---------------------------------------------------------------------------
+
 REF = config.get("reference", {})
-# Expand user paths and resolve relative paths in REF dictionary
+# Expand user paths and resolve relative paths in the REF dictionary.
 for ref_type in REF:
     if isinstance(REF[ref_type], dict):
         for key, val in REF[ref_type].items():
@@ -85,9 +130,8 @@ for ref_type in REF:
     elif isinstance(REF[ref_type], str):
         REF[ref_type] = resolve_config_path(REF[ref_type])
 
-
 TEMPDIR = Path(config.get("tempdir", ".tmp"))
-# Convert PATH dict to SimpleNamespace for dot notation access (e.g., PATH.python instead of PATH['python'])
+# `path` dict -> SimpleNamespace for dot access (PATH.python, PATH.samtools...).
 PATH = SimpleNamespace(**config.get("path", {}))
 
 INTERNALDIR = Path("internal_files")
@@ -104,20 +148,23 @@ wildcard_constraints:
     libmode="PE|SE",
 
 
+# ---------------------------------------------------------------------------
+# Sample parsing (supports both `samples` and `samples_<BATCH>`)
+# ---------------------------------------------------------------------------
+
 SAMPLE2DATA = defaultdict(lambda: defaultdict(dict))
 GROUP2SAMPLE = defaultdict(list)
-SAMPLE2LIB = defaultdict(str)
-SAMPLE2ADP = defaultdict(str)
+SAMPLE2ADAPTER = defaultdict(str)
 
-# Support both 'samples' and 'samples_{BATCH}' for compatibility
 samples_dict = config.get("samples") or config.get(f"samples_{BATCH}")
 if not samples_dict:
     raise SystemExit(f"Please add 'samples' or 'samples_{BATCH}' in your config file")
 
 for s, v in samples_dict.items():
     s = str(s)
-    SAMPLE2LIB[s] = v.get("libtype", config.get("libtype", ""))  # Built-in Name
-    SAMPLE2ADP[s] = v.get("adapter", config.get("adapter", ""))  # Custom Sequence
+    # Unified adapter scheme: a built-in cutseq name (TAKARAV2, ECLIP10, ...)
+    # or a custom grammar string, passed to cutseq via -A/--adapter-scheme.
+    SAMPLE2ADAPTER[s] = v.get("adapter", config.get("adapter", ""))
     if "group" in v:
         GROUP2SAMPLE[v["group"]].append(s)
     for i, v2 in enumerate(v["data"], 1):
@@ -137,11 +184,23 @@ REFTYPES = (
 
 
 def is_pe(sample, rn):
+    """True if the sample/run is paired-end (has both R1 and R2)."""
     return len(SAMPLE2DATA[sample][rn]) == 2
 
 
 def get_lib_subdir(sample, rn):
+    """'PE' or 'SE' subdirectory for the sample/run."""
     return "PE" if is_pe(sample, rn) else "SE"
+
+
+def is_unstranded(sample):
+    """True if the sample's adapter scheme is unstranded.
+
+    The cutseq grammar uses `:` as the unstranded separator (e.g. the built-in
+    UNSTRANDED scheme `...XX:XX...`), while `+`/`-` are sense/antisense.
+    """
+    scheme = SAMPLE2ADAPTER[sample]
+    return ":" in scheme or scheme.upper() == "UNSTRANDED"
 
 
 rule all:
@@ -153,7 +212,7 @@ rule all:
         "report_sites/filtered.tsv" if IS_ETAM else "report_sites/sites.tsv.gz",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
         [
-            INTERNALDIR / f"fastq/tooshort/{sample}_{rn}_{rd}.fq.gz"
+            INTERNALDIR / f"fastq/discarded/{sample}_{rn}_{rd}.fq.gz"
             for sample, v in SAMPLE2DATA.items()
             for rn, v2 in v.items()
             for rd in v2.keys()
@@ -164,7 +223,9 @@ rule all:
         BENCHDIR / "all.benchmark.txt"
 
 
-# prepare ref
+# ---------------------------------------------------------------------------
+# Phase 1: Reference & index preparation
+# ---------------------------------------------------------------------------
 
 
 rule internal_readme:
@@ -185,7 +246,7 @@ This directory contains intermediate files for the `dichromat` pipeline.
 - `qc/trimming/`: Trimming reports from `cutseq`.
 - `qc/fastqc_trimmed/`: FastQC reports for trimmed reads.
 - `qc/fastqc_unmapped/`: FastQC reports for unmapped reads.
-- `fastq/tooshort/`: Reads that were too short after trimming.
+- `fastq/discarded/`: Reads discarded during trimming (adapter dimers, too-short, or low-quality).
 - `fastq/unmapped/`: Reads that failed to map to any reference.
 
 ### 2. `ref/`
@@ -275,6 +336,9 @@ rule prepared_transcript_ref:
     output:
         info=INTERNALDIR / "ref/transcript.tsv",
         seq=INTERNALDIR / "ref/transcript.fa",
+    threads: 16
+    resources:
+        mem_mb=64000
     benchmark:
         BENCHDIR / "prepared_transcript_ref.benchmark.txt"
     shell:
@@ -284,7 +348,9 @@ rule prepared_transcript_ref:
         """
 
 
-# cut adapters
+# ---------------------------------------------------------------------------
+# Phase 2: Trimming & read QC
+# ---------------------------------------------------------------------------
 
 
 rule trim_se:
@@ -292,21 +358,24 @@ rule trim_se:
         lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
     output:
         c=temp(TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz"),
-        s=temp(TEMPDIR / "trim/SE/{sample}_{rn}_tooshort_R1.fq.gz"),
+        s=temp(TEMPDIR / "trim/SE/{sample}_{rn}_discarded_R1.fq.gz"),
         report=temp(TEMPDIR / "trim/SE/{sample}_{rn}_mqc.tsv"),
     params:
         minlen=config.get("min_len", 20),
-        cut=lambda wildcards: (
-            f"-A '{SAMPLE2LIB[wildcards.sample]}'"
-            if SAMPLE2LIB[wildcards.sample]
-            else f"-a '{SAMPLE2ADP[wildcards.sample]}'"
-        ),
+        trim=str(config.get("trim", True)).lower(),
+        cut=lambda wildcards: f"-A '{SAMPLE2ADAPTER[wildcards.sample]}'",
     threads: 8
     benchmark:
         BENCHDIR / "trim_se_{sample}_{rn}.benchmark.txt"
     shell:
         """
-        {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -s {output.s} --json-file {output.report} {input}
+        if [ "{params.trim}" = "false" ]; then
+            cp {input} {output.c} && \
+            gzip -n -c /dev/null > {output.s} && \
+            printf 'sample\trun\tinput_reads\toutput_reads\tdiscarded_reads\tadapter\n{wildcards.sample}\t{wildcards.rn}\t0\t0\t0\tpassthrough\n' > {output.report}
+        else
+            {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -d {output.s} --json-file {output.report} {input}
+        fi
         """
 
 
@@ -317,22 +386,28 @@ rule trim_pe:
     output:
         c1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz"),
         c2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz"),
-        s1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R1.fq.gz"),
-        s2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_tooshort_R2.fq.gz"),
+        s1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_discarded_R1.fq.gz"),
+        s2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_discarded_R2.fq.gz"),
         report=temp(TEMPDIR / "trim/PE/{sample}_{rn}_mqc.tsv"),
     params:
         minlen=config.get("min_len", 20),
-        cut=lambda wildcards: (
-            f"-A '{SAMPLE2LIB[wildcards.sample]}'"
-            if SAMPLE2LIB[wildcards.sample]
-            else f"-a '{SAMPLE2ADP[wildcards.sample]}'"
-        ),
+        trim=str(config.get("trim", True)).lower(),
+        cut=lambda wildcards: f"-A '{SAMPLE2ADAPTER[wildcards.sample]}'",
     threads: 8
     benchmark:
         BENCHDIR / "trim_pe_{sample}_{rn}.benchmark.txt"
     shell:
         """
-        {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} {output.c2} -s {output.s1} {output.s2} --json-file {output.report} {input.r1} {input.r2}
+        if [ "{params.trim}" = "false" ]; then
+            # trim: false -> passthrough (reads already trimmed/UMI-extracted upstream)
+            cp {input.r1} {output.c1} && \
+            cp {input.r2} {output.c2} && \
+            gzip -n -c /dev/null > {output.s1} && \
+            gzip -n -c /dev/null > {output.s2} && \
+            printf 'sample\trun\tinput_reads\toutput_reads\tdiscarded_reads\tadapter\n{wildcards.sample}\t{wildcards.rn}\t0\t0\t0\tpassthrough\n' > {output.report}
+        else
+            {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} {output.c2} -d {output.s1} {output.s2} --json-file {output.report} {input.r1} {input.r2}
+        fi
         """
 
 
@@ -355,20 +430,24 @@ rule finalize_discarded_reads:
     input:
         lambda wildcards: (
             TEMPDIR
-            / f"trim/PE/{wildcards.sample}_{wildcards.rn}_tooshort_{wildcards.rd}.fq.gz"
+            / f"trim/PE/{wildcards.sample}_{wildcards.rn}_discarded_{wildcards.rd}.fq.gz"
             if is_pe(wildcards.sample, wildcards.rn)
             else TEMPDIR
-            / f"trim/SE/{wildcards.sample}_{wildcards.rn}_tooshort_{wildcards.rd}.fq.gz"
+            / f"trim/SE/{wildcards.sample}_{wildcards.rn}_discarded_{wildcards.rd}.fq.gz"
         ),
     output:
-        INTERNALDIR / "fastq/tooshort/{sample}_{rn}_{rd}.fq.gz",
+        INTERNALDIR / "fastq/discarded/{sample}_{rn}_{rd}.fq.gz",
     benchmark:
         BENCHDIR / "finalize_discarded_reads_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
         "cp {input} {output}"
 
 
-# trimmed part qc
+# ---------------------------------------------------------------------------
+# Phase 2: Trimming & read QC (continued)
+# ---------------------------------------------------------------------------
+# 2b. QC of trimmed reads
+# ---------------------------------------------------------------------------
 
 
 rule qc_trimmed:
@@ -382,8 +461,9 @@ rule qc_trimmed:
         text=INTERNALDIR / "qc/fastqc_trimmed/{sample}_{rn}_{rd}/fastqc_data.txt",
         summary=INTERNALDIR / "qc/fastqc_trimmed/{sample}_{rn}_{rd}/summary.txt",
     params:
-        lambda wildcards: INTERNALDIR
-        / f"qc/fastqc_trimmed/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
+        # falco >= 2.0 creates a subdir named after the input basename inside -o,
+        # so point -o at the parent dir (falco makes the {sample}_{rn}_{rd} dir).
+        lambda wildcards: INTERNALDIR / "qc/fastqc_trimmed",
     benchmark:
         BENCHDIR / "qc_trimmed_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
@@ -406,7 +486,9 @@ rule report_qc_trimmed:
         "{PATH.report_html} qc {output} {input}"
 
 
-# premap to contamination
+# ---------------------------------------------------------------------------
+# 3a. Premap: contamination removal
+# ---------------------------------------------------------------------------
 
 
 rule premap_align_pe:
@@ -423,7 +505,7 @@ rule premap_align_pe:
         basechange=config.get("base_change", "A,G"),
         directional=lambda wildcards: (
             ""
-            if SAMPLE2LIB[wildcards.sample] == "UNSTRANDED"
+            if is_unstranded(wildcards.sample)
             else "--directional-mapping"
         ),
         splice_args=(
@@ -461,7 +543,7 @@ rule premap_align_se:
         basechange=config.get("base_change", "A,G"),
         directional=lambda wildcards: (
             ""
-            if SAMPLE2LIB[wildcards.sample] == "UNSTRANDED"
+            if is_unstranded(wildcards.sample)
             else "--directional-mapping"
         ),
         splice_args=(
@@ -555,7 +637,10 @@ rule premap_get_unmapped:
         """
 
 
-# main mapping step (genes and transcript simutaneously if genes provided, otherwise just transcript)
+# ---------------------------------------------------------------------------
+# 3b. Main map: genes + transcript (simultaneously if genes provided,
+#     otherwise just transcript)
+# ---------------------------------------------------------------------------
 
 
 rule index_transcript:
@@ -569,7 +654,8 @@ rule index_transcript:
     shell:
         """
         mkdir -p {INTERNALDIR}/ref/map_index
-        {PATH.prismalign} map -s MK --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -t {threads}
+        mkdir -p $(dirname {output.idx})
+        {PATH.prismalign} map -s MK --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -1 {input.rf} -t {threads}
         touch {output.idx}
         """
 
@@ -585,7 +671,8 @@ rule index_genes:
     shell:
         """
         mkdir -p {INTERNALDIR}/ref/map_index
-        {PATH.prismalign} map -s MK --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -t {threads}
+        mkdir -p $(dirname {output.idx})
+        {PATH.prismalign} map -s MK --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -1 {input.rf} -t {threads}
         touch {output.idx}
         """
 
@@ -619,6 +706,8 @@ rule mainmap_align_pe:
     params:
         genes_ref=lambda wildcards, input: f"-r {input.rf1}" if HAS_GENES else "",
         genes_out=lambda wildcards, output: f"-o {output.mp1}" if HAS_GENES else "",
+        min_mapping_ratio=config.get("min_mapping_ratio", 0.8),
+        max_mismatches=config.get("max_mismatches", 6),
     shell:
         """
         {PATH.prismalign} map \
@@ -627,8 +716,8 @@ rule mainmap_align_pe:
             {params.genes_ref} \
             -r {input.rf2} --index-dir {INTERNALDIR}/ref/map_index \
             -1 {input.fq1} -2 {input.fq2} \
-            --min-mapping-ratio 0.8 \
-            -m 6 \
+            --min-mapping-ratio {params.min_mapping_ratio} \
+            -m {params.max_mismatches} \
             --max-conversion-rates 1.0,0.33 \
             --report {output.summary} \
             {params.genes_out} \
@@ -661,6 +750,8 @@ rule mainmap_align_se:
     params:
         genes_ref=lambda wildcards, input: f"-r {input.rf1}" if HAS_GENES else "",
         genes_out=lambda wildcards, output: f"-o {output.mp1}" if HAS_GENES else "",
+        min_mapping_ratio=config.get("min_mapping_ratio", 0.8),
+        max_mismatches=config.get("max_mismatches", 6),
     shell:
         """
         {PATH.prismalign} map \
@@ -669,8 +760,8 @@ rule mainmap_align_se:
             {params.genes_ref} \
             -r {input.rf2} --index-dir {INTERNALDIR}/ref/map_index \
             -1 {input.fq} \
-            --min-mapping-ratio 0.8 \
-            -m 6 \
+            --min-mapping-ratio {params.min_mapping_ratio} \
+            -m {params.max_mismatches} \
             --max-conversion-rates 1.0,0.33 \
             --report {output.summary} \
             {params.genes_out} \
@@ -753,7 +844,9 @@ rule mainmap_get_unmapped_se:
         """
 
 
-# postmap to genome
+# ---------------------------------------------------------------------------
+# 3c. Remap: genome (unmapped reads from the main map)
+# ---------------------------------------------------------------------------
 
 
 rule remap_align_pe:
@@ -770,7 +863,7 @@ rule remap_align_pe:
         basechange=config.get("base_change", "A,G"),
         directional=lambda wildcards: (
             ""
-            if SAMPLE2LIB[wildcards.sample] == "UNSTRANDED"
+            if is_unstranded(wildcards.sample)
             else "--directional-mapping"
         ),
         splice_args=(
@@ -808,7 +901,7 @@ rule remap_align_se:
         basechange=config.get("base_change", "A,G"),
         directional=lambda wildcards: (
             ""
-            if SAMPLE2LIB[wildcards.sample] == "UNSTRANDED"
+            if is_unstranded(wildcards.sample)
             else "--directional-mapping"
         ),
         splice_args=(
@@ -921,8 +1014,9 @@ rule unmapped_qc:
         text=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/fastqc_data.txt",
         summary=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/summary.txt",
     params:
-        lambda wildcards: INTERNALDIR
-        / f"qc/fastqc_unmapped/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}",
+        # falco >= 2.0 creates a subdir named after the input basename inside -o,
+        # so point -o at the parent dir (falco makes the {sample}_{rn}_{rd} dir).
+        lambda wildcards: INTERNALDIR / "qc/fastqc_unmapped",
     benchmark:
         BENCHDIR / "unmapped_qc_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
@@ -946,9 +1040,9 @@ rule unmapped_report:
         "{PATH.report_html} qc {output} {input}"
 
 
-#######################
-# combine runs
-#######################
+# ---------------------------------------------------------------------------
+# Phase 4: BAM merge + dedup + stats
+# ---------------------------------------------------------------------------
 
 
 rule combine_bams:
@@ -1128,9 +1222,9 @@ rule read_length:
         """
 
 
-###################
-# call sites
-###################
+# ---------------------------------------------------------------------------
+# Phase 5: Site calling & table merge/remap
+# ---------------------------------------------------------------------------
 
 
 rule cal_spike_ratio:
@@ -1293,7 +1387,7 @@ rule motif_conversion_rate_stat:
         "m=toupper(substr($4,15,3)); "
         'if(m ~ "^[ATGC]+$" && substr(m,2,1) == target){{ '
         "a=$5+$6;g=$7+$8;d=a+g;na[m]++;ua[m]+=a;da[m]+=d;ra[m]+=a/d;"
-        "if(($6+$8+0)>0){{n1[m]++;u1[m]+=$6;d1[m]+=$6+$8;r1[m]+=$6/($6+$8)}}}}"
+        "if(($6+$8+0)>0){{n1[m]++;u1[m]+=$6;d1[m]+=$6+$8;r1[m]+=$6/($6+$8)}}}}}}"
         "END{{for(m in da) print m,(n1[m]+0),(u1[m]+0),(d1[m]+0),(n1[m]>0?r1[m]/n1[m]:0),na[m],ua[m],da[m],ra[m]/na[m]}}' > {output}"
 
 
@@ -1367,7 +1461,9 @@ rule group_and_pval_cal:
         """
 
 
-# multiqc custom
+# ---------------------------------------------------------------------------
+# Phase 6: Report generation
+# ---------------------------------------------------------------------------
 
 
 rule mqc_aggregate_mapping_stats:
@@ -1398,6 +1494,7 @@ rule mqc_aggregate_mapping_stats:
     threads: 4
     shell:
         """
+        mkdir -p $(dirname {output.mapping})
         {PATH.mqc_mapping} {output.mapping} {output.dedup} {input.counts} --dedup-logs {input.dedup_logs} --trim-jsons {input.trim_jsons}
         """
 
@@ -1429,6 +1526,7 @@ rule mqc_aggregate_site_stats:
         runtime=720
     shell:
         """
+        mkdir -p $(dirname {output.motifs})
         {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} {output.site_depth} {output.motif_transcript} {output.motif_genome} --motif-files {input.motifs} --sites-file {input.sites_file} --target-base {params.target_base}
         """
 
