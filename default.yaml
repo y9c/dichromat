@@ -33,7 +33,7 @@ min_len: 20
 #   max_mismatches:    max mismatches tolerated (6 default; lower rejects more
 #                      C->T background for the A2G-only case, but MK models it).
 min_mapping_ratio: 0.8
-max_mismatches: 6
+max_mismatches: 2
 markdup: true
 splice_genome: true
 splice_contamination: false
