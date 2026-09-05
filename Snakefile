@@ -655,7 +655,7 @@ rule index_transcript:
         """
         mkdir -p {INTERNALDIR}/ref/map_index
         mkdir -p $(dirname {output.idx})
-        {PATH.prismalign} map -s MK --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -1 {input.rf} -t {threads}
+        {PATH.prismalign} map -s MK --adapter bwa-mem2 --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -1 {input.rf} -t {threads}
         touch {output.idx}
         """
 
@@ -672,7 +672,7 @@ rule index_genes:
         """
         mkdir -p {INTERNALDIR}/ref/map_index
         mkdir -p $(dirname {output.idx})
-        {PATH.prismalign} map -s MK --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -1 {input.rf} -t {threads}
+        {PATH.prismalign} map -s MK --adapter bwa-mem2 --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -1 {input.rf} -t {threads}
         touch {output.idx}
         """
 
@@ -711,7 +711,7 @@ rule mainmap_align_pe:
     shell:
         """
         {PATH.prismalign} map \
-            -s MK -t {threads} \
+            -s MK -t {threads} --adapter bwa-mem2 \
             --ref-strand fwd \
             {params.genes_ref} \
             -r {input.rf2} --index-dir {INTERNALDIR}/ref/map_index \
@@ -755,7 +755,7 @@ rule mainmap_align_se:
     shell:
         """
         {PATH.prismalign} map \
-            -s MK -t {threads} \
+            -s MK -t {threads} --adapter bwa-mem2 \
             --ref-strand fwd \
             {params.genes_ref} \
             -r {input.rf2} --index-dir {INTERNALDIR}/ref/map_index \

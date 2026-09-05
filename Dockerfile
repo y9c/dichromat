@@ -1,6 +1,7 @@
 # Use ARGs for versions
 ARG SAMTOOLS_VERSION="1.24"
 ARG FALCO_VERSION="2.0.1"
+ARG BWA_MEM2_VERSION="2.3"
 ARG PYTHON_VERSION_FOR_APP="3.13"
 
 # -------- Mirror toggles (China vs rest of world) --------
@@ -37,6 +38,7 @@ FROM python:3.13-slim-bookworm AS builder
 
 ARG SAMTOOLS_VERSION
 ARG FALCO_VERSION
+ARG BWA_MEM2_VERSION
 ARG PYTHON_VERSION_FOR_APP
 ARG UV_DEFAULT_INDEX
 ARG APT_MIRROR
@@ -84,7 +86,7 @@ ENV VENV_PATH=/opt/venv
 RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
     uv pip install --python ${VENV_PATH}/bin/python --no-cache \
         snakemake==9.26.1 cutseq==0.0.70 markdup==0.0.29 \
-        countmut==0.2.2 coralsnake==0.2.1 prismalign==0.2.10 \
+        countmut==0.2.2 coralsnake==0.2.1 prismalign==0.2.11 \
         duckdb==1.5.5 polars==1.33.1 scipy==1.18.1 numpy==2.5.2 pysam==0.24.0 pyyaml==6.0.3 && \
     for t in snakemake cutseq markdup countmut coralsnake prismalign; do \
         ln -s ${VENV_PATH}/bin/$t /usr/local/bin/$t; \
@@ -127,6 +129,13 @@ RUN curl -L --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/smithlabc
     tar -xzf falco.tar.gz --strip-components 2 -C /usr/local/bin falco-${FALCO_VERSION}-Linux/bin/falco && \
     chmod +x /usr/local/bin/falco && \
     rm -rf /build/falco
+
+# --- Install bwa-mem2 prebuilt Linux binary (`--adapter bwa-mem2` path) ---
+WORKDIR /build
+RUN curl -L --http1.1 --retry 5 --retry-all-errors --retry-delay 5 ${GH_BASEURL}/bwa-mem2/bwa-mem2/releases/download/v${BWA_MEM2_VERSION}/bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 -o bwa-mem2.tar.bz2 && \
+    tar -xjvf bwa-mem2.tar.bz2 --strip-components 1 -C /usr/local/bin && \
+    chmod +x /usr/local/bin/bwa-mem2* && \
+    rm -rf /build/bwa-mem2.tar.bz2
 
 # --- CLEANUP ---
 # Drop bytecode and test/docs trees, and remove the uv/uvx launchers which are
