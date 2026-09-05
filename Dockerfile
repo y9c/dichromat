@@ -19,6 +19,19 @@ ARG APT_MIRROR=""
 #   Rest of world (default):      direct github.com
 ARG GH_BASEURL="https://github.com"
 
+# Registry host for the uv launcher image (ghcr.io). Override for a China
+# ghcr mirror that serves the same astral-sh/uv image, e.g.:
+#   China:        --build-arg UV_IMAGE=ghcr.nju.edu.cn
+#   Rest of world (default): ghcr.io (GitHub Actions / Docker Hub friendly)
+ARG UV_IMAGE="ghcr.io"
+
+# ----------- UV launcher stage -----------
+# BuildKit does NOT support variable expansion in COPY --from, so we define a
+# dedicated stage whose FROM uses the ARG (FROM supports global-scope ARGs).
+# The host is controlled by UV_IMAGE (default ghcr.io; set to a China ghcr
+# mirror like ghcr.nju.edu.cn to build fast from CN).
+FROM ${UV_IMAGE}/astral-sh/uv:latest AS uv
+
 # ----------- Builder Stage (Heavy) -----------
 FROM python:3.13-slim-bookworm AS builder
 
@@ -28,6 +41,7 @@ ARG PYTHON_VERSION_FOR_APP
 ARG UV_DEFAULT_INDEX
 ARG APT_MIRROR
 ARG GH_BASEURL
+ARG UV_IMAGE
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -46,8 +60,8 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     git binutils && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+# Install uv (from the uv stage whose FROM host is controlled by UV_IMAGE)
+COPY --from=uv /uv /uvx /usr/local/bin/
 
 # --- Single merged runtime environment -----------------------------------
 # All pipeline Python libraries + bioinformatics CLI tools live in ONE venv,
@@ -70,7 +84,7 @@ ENV VENV_PATH=/opt/venv
 RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
     uv pip install --python ${VENV_PATH}/bin/python --no-cache \
         snakemake==9.26.1 cutseq==0.0.70 markdup==0.0.29 \
-        countmut==0.2.2 coralsnake==0.2.1 prismalign==0.2.1 \
+        countmut==0.2.2 coralsnake==0.2.1 prismalign==0.2.9 \
         duckdb==1.5.5 polars==1.33.1 scipy==1.18.1 numpy==2.5.2 pysam==0.24.0 pyyaml==6.0.3 && \
     for t in snakemake cutseq markdup countmut coralsnake prismalign; do \
         ln -s ${VENV_PATH}/bin/$t /usr/local/bin/$t; \
