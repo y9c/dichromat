@@ -44,20 +44,25 @@ layers:
       pre_gate: {}             # contamination gate (min_softclip=30, xm_factor=15)
 
   # ---- LAYER 1: main map - genes (bwa-mem2, MK; masking layer, claims first) ----
+  # Strand-specific reference (rRNA/sncRNA): map forward-only (channel 0) to
+  # avoid spurious reverse-strand hits and halve the alignment work.
   - key: genes
     role: main
     engine: bwa-mem2
     scheme: MK
+    ref_strand: fwd
     filter:
       min_mapping_ratio: 0.8
       max_conversion_rates: [1.0, 0.33]
     em: true
 
   # ---- LAYER 2: main map - transcript (bwa-mem2, MK) ----
+  # Transcripts have a defined 5'->3' direction: map forward-only (channel 0).
   - key: transcript
     role: main
     engine: bwa-mem2
     scheme: MK
+    ref_strand: fwd
     filter:
       min_mapping_ratio: 0.8
       max_conversion_rates: [1.0, 0.33]
