@@ -17,8 +17,8 @@ printf "$logo\n"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load Apptainer module (required for cluster environment)
-if [ -f /data/mgt/modules-5.6.1/init/bash ]; then
-    source /data/mgt/modules-5.6.1/init/bash
+if [ -f /data/share/apps/modules/init/profile.sh ]; then
+    source /data/share/apps/modules/init/profile.sh
     module load apptainer/1.4.5 || true
 fi
 

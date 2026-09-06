@@ -79,3 +79,6 @@ internal_files/
 
 plots/
 .ipynb_checkpoints/
+
+# Local VM build config (contains private SSH key paths / node names)
+.sif-vm-build-env

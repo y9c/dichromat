@@ -17,6 +17,7 @@ Usage (same interface as the polars script):
 """
 
 import argparse
+import gzip
 import logging
 from pathlib import Path
 
@@ -41,7 +42,8 @@ def file_relation(con, path, n):
             + f", CAST(Depth AS BIGINT) AS {d}")
         return rel.filter(f"{d} > 0")
 
-    with open(p, errors="replace") as fh:
+    opener = gzip.open if p.endswith(".gz") else open
+    with opener(p, "rt", errors="replace") as fh:
         first = fh.readline()
     if not first.lstrip().startswith("chrom"):
         raise ValueError(

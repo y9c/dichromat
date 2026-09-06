@@ -86,6 +86,11 @@ def main():
                     f" FROM ({' UNION ALL BY NAME '.join(motif_parts)})"
                     " GROUP BY Motif, reftype")
                 rows = con.sql(agg_sql).fetchall()
+                # Write the full aggregated motif heatmap (Motif, reftype, Ratio)
+                with open(args.heatmap_output, "w", newline="") as fh:
+                    fh.write("\t".join(["Motif", "reftype", "Ratio"]) + "\n")
+                    for m, t, r in sorted(rows, key=lambda x: (x[1], x[0])):
+                        fh.write("\t".join([str(m), str(t), _fmt(r)]) + "\n")
                 for reftype, out_path in [("transcript", args.transcript_table_output),
                                           ("genome", args.genome_table_output)]:
                     sub = sorted([(m, r) for m, t, r in rows if t == reftype],
@@ -102,10 +107,10 @@ def main():
         for lib in libraries:
             dcol = f"Depth_{lib}"
             ucol = f"Uncon_{lib}"
-            aggs.append(f'COUNT("{dcol}") AS cnt_{lib}')
-            aggs.append(f'SUM(CAST("{dcol}" AS DOUBLE)) AS sumd_{lib}')
-            aggs.append(f'SUM(CAST("{ucol}" AS DOUBLE)/CAST("{dcol}" AS DOUBLE)) AS sumr_{lib}')
-            aggs.append(f'MAX(CAST("{ucol}" AS DOUBLE)/CAST("{dcol}" AS DOUBLE)) AS maxr_{lib}')
+            aggs.append(f'COUNT("{dcol}") AS "cnt_{lib}"')
+            aggs.append(f'SUM(CAST("{dcol}" AS DOUBLE)) AS "sumd_{lib}"')
+            aggs.append(f'SUM(CAST("{ucol}" AS DOUBLE)/CAST("{dcol}" AS DOUBLE)) AS "sumr_{lib}"')
+            aggs.append(f'MAX(CAST("{ucol}" AS DOUBLE)/CAST("{dcol}" AS DOUBLE)) AS "maxr_{lib}"')
         one = con.sql(f"SELECT {', '.join(aggs)} FROM ({sites_sql})").fetchone()
 
         summary_rows = []

@@ -308,7 +308,7 @@ rule build_contamination_hisat3n_index:
         """
         mkdir -p $(dirname {params.prefix})
         rm -f {params.prefix}*.ht2
-        {PATH.hisat3n} build -p {threads} --base-change {params.basechange} {input} {params.prefix}
+        {PATH.hisat3nbuild} -p {threads} --base-change {params.basechange} {input} {params.prefix}
         touch {output}
         """
 
@@ -491,89 +491,89 @@ rule report_qc_trimmed:
 # ---------------------------------------------------------------------------
 
 
-rule premap_align_pe:
+# ---------------------------------------------------------------------------
+# 3a'. Competitive mapping cascade (single prismalign pipeline command)
+#
+# Replaces the old premap_align_* + mainmap_align_* + remap_align_* rules with
+# one ``prismalign -p pipeline_m6A.yaml`` invocation. The pipeline config
+# describes the layered logic (contamination -> genes -> transcript -> genome);
+# references, reads and outputs are bound here via each layer's ``key``. It
+# emits one BAM per layer (contamination/genes/transcript/genome) plus the
+# final unmapped reads, so downstream combine_bams / stats / count_reads keep
+# working unchanged.
+# ---------------------------------------------------------------------------
+
+rule map_cascade:
     input:
-        fq1=TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz",
-        fq2=TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz",
-        idx=INTERNALDIR / "ref/contamination/index.indexed",
+        fq1=lambda wildcards: (
+            TEMPDIR / f"trim/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
+        ),
+        fq2=lambda wildcards: (
+            TEMPDIR / f"trim/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}_R2.fq.gz"
+            if is_pe(wildcards.sample, wildcards.rn)
+            else []
+        ),
+        cont_fa=INTERNALDIR / "ref/contamination.fa" if HAS_CONTAM else [],
+        cont_idx=INTERNALDIR / "ref/contamination/index.indexed" if HAS_CONTAM else [],
+        genes_fa=INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
+        tx_fa=INTERNALDIR / "ref/transcript.fa",
+        genome_fa=REF["genome"]["fa"],
     output:
-        mapped=temp(TEMPDIR / "premap/PE/{sample}_{rn}.contam.bam"),
-        unmapped=temp(TEMPDIR / "premap/PE/{sample}_{rn}.unmap.bam"),
-        summary=temp(TEMPDIR / "premap/PE/{sample}_{rn}.summary"),
+        contam=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.contam.bam") if HAS_CONTAM else [],
+        genes=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genes.bam") if HAS_GENES else [],
+        tx=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.transcript.bam"),
+        genome=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genome.bam"),
+        unmap=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.final_unmap.fq"),
+        summary=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.summary"),
+    threads: 128
+    benchmark:
+        BENCHDIR / "map_cascade_{libmode}_{sample}_{rn}.benchmark.txt"
     params:
-        index=str(INTERNALDIR / "ref/contamination/index"),
-        basechange=config.get("base_change", "A,G"),
-        directional=lambda wildcards: (
-            ""
-            if is_unstranded(wildcards.sample)
-            else "--directional-mapping"
-        ),
-        splice_args=(
-            "--pen-noncansplice 20 --min-intronlen 20 --max-intronlen 20"
-            if SPLICE_CONTAM
-            else "--no-spliced-alignment"
-        ),
-        secondary_args=(
-            f"--secondary-change {config['secondary_change']}"
-            if config.get("secondary_change")
+        pipeline=str(Path(workflow.basedir) / "pipeline_m6A.yaml"),
+        max_mismatches=config.get("max_mismatches", 2),
+        # The genome hisat-3n index prefix is a directory-style prefix (not a
+        # single file), so it is referenced directly (not via input, which
+        # Snakemake would check for existence).
+        cont_ref=lambda wildcards, input: (
+            f"-r contamination={input.cont_fa}:{str(INTERNALDIR / 'ref/contamination/index')}"
+            if HAS_CONTAM
             else ""
         ),
-    threads: 64
-    benchmark:
-        BENCHDIR / "premap_align_pe_{sample}_{rn}.benchmark.txt"
+        genes_ref=lambda wildcards, input: (
+            f"-r genes={input.genes_fa}" if HAS_GENES else ""
+        ),
+        tx_ref=lambda wildcards, input: f"-r transcript={input.tx_fa}",
+        genome_ref=lambda wildcards, input: (
+            f"-r genome={input.genome_fa}:{REF['genome']['hisat3n']}"
+        ),
+        cont_out=lambda wildcards, output: (
+            f"-o contamination={output.contam}" if HAS_CONTAM else ""
+        ),
+        genes_out=lambda wildcards, output: (
+            f"-o genes={output.genes}" if HAS_GENES else ""
+        ),
+        tx_out=lambda wildcards, output: f"-o transcript={output.tx}",
+        genome_out=lambda wildcards, output: f"-o genome={output.genome}",
+        r2=lambda wildcards, input: (
+            f"-2 {input.fq2}" if is_pe(wildcards.sample, wildcards.rn) else ""
+        ),
     shell:
         """
         set -eo pipefail
-        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
-            --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
-            {PATH.samtools} view -@ {threads} -e 'flag.proper_pair && !flag.unmap && !flag.munmap && qlen-sclen >= 30 && [XM] * 15 < (qlen-sclen)' -O BAM -U {output.unmapped} -o {output.mapped}
-        """
-
-
-rule premap_align_se:
-    input:
-        fq=TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz",
-        idx=INTERNALDIR / "ref/contamination/index.indexed",
-    output:
-        mapped=temp(TEMPDIR / "premap/SE/{sample}_{rn}.contam.bam"),
-        unmapped=temp(TEMPDIR / "premap/SE/{sample}_{rn}.unmap.bam"),
-        summary=temp(TEMPDIR / "premap/SE/{sample}_{rn}.summary"),
-    params:
-        index=str(INTERNALDIR / "ref/contamination/index"),
-        basechange=config.get("base_change", "A,G"),
-        directional=lambda wildcards: (
-            ""
-            if is_unstranded(wildcards.sample)
-            else "--directional-mapping"
-        ),
-        splice_args=(
-            "--pen-noncansplice 20 --min-intronlen 20 --max-intronlen 20"
-            if SPLICE_CONTAM
-            else "--no-spliced-alignment"
-        ),
-        secondary_args=(
-            f"--secondary-change {config['secondary_change']}"
-            if config.get("secondary_change")
-            else ""
-        ),
-    threads: 64
-    benchmark:
-        BENCHDIR / "premap_align_se_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        set -eo pipefail
-        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
-            --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8 |\
-            {PATH.samtools} view -@ {threads} -e '!flag.unmap && qlen-sclen >= 30 && [XM] * 15 < qlen-sclen' -O BAM -U {output.unmapped} -o {output.mapped}
+        {PATH.prismalign} -p {params.pipeline} \
+            {params.cont_ref} {params.genes_ref} {params.tx_ref} {params.genome_ref} \
+            -1 {input.fq1} {params.r2} \
+            {params.cont_out} {params.genes_out} {params.tx_out} {params.genome_out} \
+            -u {output.unmap} -R {output.summary} \
+            -t {threads} -m {params.max_mismatches}
         """
 
 
 rule finalize_premap_summary:
     input:
         lambda wildcards: (
-            TEMPDIR / f"premap/PE/{wildcards.sample}_{wildcards.rn}.summary"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR / f"premap/SE/{wildcards.sample}_{wildcards.rn}.summary"
+            TEMPDIR
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.summary"
         ),
     output:
         INTERNALDIR / "stats/premap/{sample}_{rn}.summary",
@@ -583,30 +583,11 @@ rule finalize_premap_summary:
         "cp {input} {output}"
 
 
-rule premap_fixmate:
-    input:
-        TEMPDIR / "premap/{libmode}/{sample}_{rn}.contam.bam",
-    output:
-        temp(TEMPDIR / "premap/{libmode}/{sample}_{rn}.fixmate.bam"),
-    threads: 8
-    benchmark:
-        BENCHDIR / "premap_fixmate_{libmode}_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        if [ "{wildcards.libmode}" == "PE" ]; then
-            {PATH.samtools} fixmate -@ {threads} -m -O BAM {input} {output}
-        else
-            cp {input} {output}
-        fi
-        """
-
-
 rule finalize_premap_bam:
     input:
         lambda wildcards: (
-            TEMPDIR / f"premap/PE/{wildcards.sample}_{wildcards.rn}.fixmate.bam"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR / f"premap/SE/{wildcards.sample}_{wildcards.rn}.fixmate.bam"
+            TEMPDIR
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.contam.bam"
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.contamination.bam",
@@ -616,25 +597,6 @@ rule finalize_premap_bam:
         BENCHDIR / "finalize_premap_bam_{sample}_{rn}.benchmark.txt"
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
-
-
-rule premap_get_unmapped:
-    input:
-        un=TEMPDIR / "premap/{libmode}/{sample}_{rn}.unmap.bam",
-    output:
-        r1=temp(TEMPDIR / "unmapped/premap/{libmode}/{sample}_{rn}_R1.fq.gz"),
-        r2=temp(TEMPDIR / "unmapped/premap/{libmode}/{sample}_{rn}_R2.fq.gz"),
-    benchmark:
-        BENCHDIR / "premap_get_unmapped_{libmode}_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        if [ "{wildcards.libmode}" == "PE" ]; then
-            {PATH.samtools} fastq -F 0x900 -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
-        else
-            {PATH.samtools} fastq -F 0x900 -0 {output.r1} -n {input}
-            touch {output.r2}
-        fi
-        """
 
 
 # ---------------------------------------------------------------------------
@@ -677,105 +639,11 @@ rule index_genes:
         """
 
 
-rule mainmap_align_pe:
-    input:
-        fq1=lambda wildcards: (
-            TEMPDIR / f"unmapped/premap/PE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
-            if HAS_CONTAM
-            else TEMPDIR / f"trim/PE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
-        ),
-        fq2=lambda wildcards: (
-            TEMPDIR / f"unmapped/premap/PE/{wildcards.sample}_{wildcards.rn}_R2.fq.gz"
-            if HAS_CONTAM
-            else TEMPDIR / f"trim/PE/{wildcards.sample}_{wildcards.rn}_R2.fq.gz"
-        ),
-        rf1=lambda wildcards: INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
-        rf2=INTERNALDIR / "ref/transcript.fa",
-        idx1=lambda wildcards: (
-            [INTERNALDIR / "ref/genes/index.indexed"] if HAS_GENES else []
-        ),
-        idx2=INTERNALDIR / "ref/transcript/index.indexed",
-    output:
-        mp2=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.transcript.bam"),
-        um=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam"),
-        summary=temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.summary"),
-        mp1=[temp(TEMPDIR / "mainmap/PE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
-    threads: 128
-    benchmark:
-        BENCHDIR / "mainmap_align_pe_{sample}_{rn}.benchmark.txt"
-    params:
-        genes_ref=lambda wildcards, input: f"-r {input.rf1}" if HAS_GENES else "",
-        genes_out=lambda wildcards, output: f"-o {output.mp1}" if HAS_GENES else "",
-        min_mapping_ratio=config.get("min_mapping_ratio", 0.8),
-        max_mismatches=config.get("max_mismatches", 6),
-    shell:
-        """
-        {PATH.prismalign} map \
-            -s MK -t {threads} --adapter bwa-mem2 \
-            --ref-strand fwd \
-            {params.genes_ref} \
-            -r {input.rf2} --index-dir {INTERNALDIR}/ref/map_index \
-            -1 {input.fq1} -2 {input.fq2} \
-            --min-mapping-ratio {params.min_mapping_ratio} \
-            -m {params.max_mismatches} \
-            --max-conversion-rates 1.0,0.33 \
-            --report {output.summary} \
-            {params.genes_out} \
-            -o {output.mp2} \
-            -u {output.um}
-        """
-
-
-rule mainmap_align_se:
-    input:
-        fq=lambda wildcards: (
-            TEMPDIR / f"unmapped/premap/SE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
-            if HAS_CONTAM
-            else TEMPDIR / f"trim/SE/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
-        ),
-        rf1=lambda wildcards: INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
-        rf2=INTERNALDIR / "ref/transcript.fa",
-        idx1=lambda wildcards: (
-            [INTERNALDIR / "ref/genes/index.indexed"] if HAS_GENES else []
-        ),
-        idx2=INTERNALDIR / "ref/transcript/index.indexed",
-    output:
-        mp2=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.transcript.bam"),
-        um=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam"),
-        summary=temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.summary"),
-        mp1=[temp(TEMPDIR / "mainmap/SE/{sample}_{rn}.genes.bam")] if HAS_GENES else [],
-    threads: 64
-    benchmark:
-        BENCHDIR / "mainmap_align_se_{sample}_{rn}.benchmark.txt"
-    params:
-        genes_ref=lambda wildcards, input: f"-r {input.rf1}" if HAS_GENES else "",
-        genes_out=lambda wildcards, output: f"-o {output.mp1}" if HAS_GENES else "",
-        min_mapping_ratio=config.get("min_mapping_ratio", 0.8),
-        max_mismatches=config.get("max_mismatches", 6),
-    shell:
-        """
-        {PATH.prismalign} map \
-            -s MK -t {threads} --adapter bwa-mem2 \
-            --ref-strand fwd \
-            {params.genes_ref} \
-            -r {input.rf2} --index-dir {INTERNALDIR}/ref/map_index \
-            -1 {input.fq} \
-            --min-mapping-ratio {params.min_mapping_ratio} \
-            -m {params.max_mismatches} \
-            --max-conversion-rates 1.0,0.33 \
-            --report {output.summary} \
-            {params.genes_out} \
-            -o {output.mp2} \
-            -u {output.um}
-        """
-
-
 rule finalize_mainmap_summary:
     input:
         lambda wildcards: (
-            TEMPDIR / f"mainmap/PE/{wildcards.sample}_{wildcards.rn}.summary"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR / f"mainmap/SE/{wildcards.sample}_{wildcards.rn}.summary"
+            TEMPDIR
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.summary"
         ),
     output:
         INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
@@ -789,7 +657,7 @@ rule finalize_mainmap_genes_bam:
     input:
         lambda wildcards: (
             TEMPDIR
-            / f"mainmap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genes.bam"
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genes.bam"
             if HAS_GENES
             else []
         ),
@@ -806,7 +674,7 @@ rule finalize_mainmap_transcript_bam:
     input:
         lambda wildcards: (
             TEMPDIR
-            / f"mainmap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.transcript.bam"
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.transcript.bam"
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.transcript.bam",
@@ -817,121 +685,11 @@ rule finalize_mainmap_transcript_bam:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
-rule mainmap_get_unmapped_pe:
-    input:
-        un=TEMPDIR / "mainmap/PE/{sample}_{rn}.main.bam",
-    output:
-        r1=temp(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R1.fq.gz"),
-        r2=temp(TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz"),
-    benchmark:
-        BENCHDIR / "mainmap_get_unmapped_pe_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        {PATH.samtools} fastq -F 0x900 -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
-        """
-
-
-rule mainmap_get_unmapped_se:
-    input:
-        un=TEMPDIR / "mainmap/SE/{sample}_{rn}.main.bam",
-    output:
-        r1=temp(TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz"),
-    benchmark:
-        BENCHDIR / "mainmap_get_unmapped_se_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        {PATH.samtools} fastq -F 0x900 -0 {output.r1} -n {input}
-        """
-
-
-# ---------------------------------------------------------------------------
-# 3c. Remap: genome (unmapped reads from the main map)
-# ---------------------------------------------------------------------------
-
-
-rule remap_align_pe:
-    input:
-        fq1=TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R1.fq.gz",
-        fq2=TEMPDIR / "unmapped/mainmap/PE/{sample}_{rn}_R2.fq.gz",
-    output:
-        bam=temp(TEMPDIR / "remap/PE/{sample}_{rn}.mapped.bam"),
-        summary=temp(TEMPDIR / "remap/PE/{sample}_{rn}.summary"),
-        report=temp(TEMPDIR / "remap/PE/{sample}_{rn}.report_mqc.tsv"),
-        unmapped=temp(TEMPDIR / "remap/PE/{sample}_{rn}.final_unmap.bam"),
-    params:
-        index=REF["genome"]["hisat3n"],
-        basechange=config.get("base_change", "A,G"),
-        directional=lambda wildcards: (
-            ""
-            if is_unstranded(wildcards.sample)
-            else "--directional-mapping"
-        ),
-        splice_args=(
-            "--pen-noncansplice 20 --min-intronlen 20 --max-intronlen 20"
-            if SPLICE_GENOME
-            else "--no-spliced-alignment"
-        ),
-        secondary_args=(
-            f"--secondary-change {config['secondary_change']}"
-            if config.get("secondary_change")
-            else ""
-        ),
-    threads: 64
-    benchmark:
-        BENCHDIR / "remap_align_pe_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        set -eo pipefail
-        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -1 {input.fq1} -2 {input.fq2} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
-            --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
-        """
-
-
-rule remap_align_se:
-    input:
-        fq=TEMPDIR / "unmapped/mainmap/SE/{sample}_{rn}_R1.fq.gz",
-    output:
-        bam=temp(TEMPDIR / "remap/SE/{sample}_{rn}.mapped.bam"),
-        summary=temp(TEMPDIR / "remap/SE/{sample}_{rn}.summary"),
-        report=temp(TEMPDIR / "remap/SE/{sample}_{rn}.report_mqc.tsv"),
-        unmapped=temp(TEMPDIR / "remap/SE/{sample}_{rn}.final_unmap.bam"),
-    params:
-        index=REF["genome"]["hisat3n"],
-        basechange=config.get("base_change", "A,G"),
-        directional=lambda wildcards: (
-            ""
-            if is_unstranded(wildcards.sample)
-            else "--directional-mapping"
-        ),
-        splice_args=(
-            "--pen-noncansplice 20 --min-intronlen 20 --max-intronlen 20"
-            if SPLICE_GENOME
-            else "--no-spliced-alignment"
-        ),
-        secondary_args=(
-            f"--secondary-change {config['secondary_change']}"
-            if config.get("secondary_change")
-            else ""
-        ),
-    threads: 64
-    benchmark:
-        BENCHDIR / "remap_align_se_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        set -eo pipefail
-        {PATH.hisat3n} --index {params.index} -p {threads} --summary-file {output.summary} --new-summary -q -U {input.fq} --base-change {params.basechange} {params.secondary_args} {params.directional} {params.splice_args} \
-            --avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5 |\
-            {PATH.samtools} view -e '(([NS] + [NC]*0.2) / qlen) <= 0.08 && !flag.secondary' -@ {threads} -U {output.unmapped} --save-counts {output.report} -O BAM -o {output.bam}
-        """
-
-
 rule finalize_remap_summary:
     input:
         lambda wildcards: (
-            TEMPDIR / f"remap/PE/{wildcards.sample}_{wildcards.rn}.summary"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR / f"remap/SE/{wildcards.sample}_{wildcards.rn}.summary"
+            TEMPDIR
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.summary"
         ),
     output:
         INTERNALDIR / "stats/remap/{sample}_{rn}.summary",
@@ -945,7 +703,7 @@ rule finalize_genome_bam:
     input:
         lambda wildcards: (
             TEMPDIR
-            / f"remap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.mapped.bam"
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genome.bam"
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.genome.bam",
@@ -956,54 +714,26 @@ rule finalize_genome_bam:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
-rule finalize_genome_report:
-    input:
-        lambda wildcards: (
-            TEMPDIR
-            / f"remap/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.report_mqc.tsv"
-        ),
-    output:
-        INTERNALDIR / "stats/filter/{sample}_{rn}.genome_mqc.tsv",
-    benchmark:
-        BENCHDIR / "finalize_genome_report_{sample}_{rn}.benchmark.txt"
-    shell:
-        "cp {input} {output}"
-
-
-rule remap_get_unmapped:
-    input:
-        un=TEMPDIR / "remap/{libmode}/{sample}_{rn}.final_unmap.bam",
-    output:
-        r1=temp(TEMPDIR / "unmapped/remap/{libmode}/{sample}_{rn}_R1.fq.gz"),
-        r2=temp(TEMPDIR / "unmapped/remap/{libmode}/{sample}_{rn}_R2.fq.gz"),
-    benchmark:
-        BENCHDIR / "remap_get_unmapped_{libmode}_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        if [ "{wildcards.libmode}" == "PE" ]; then
-            {PATH.samtools} fastq -F 0x900 -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n {input}
-        else
-            touch {output.r2}
-            {PATH.samtools} fastq -F 0x900 -0 {output.r1} -n {input}
-        fi
-        """
-
-
 rule finalize_unmapped_fq:
     input:
         lambda wildcards: (
             TEMPDIR
-            / f"unmapped/remap/PE/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}.fq.gz"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR
-            / f"unmapped/remap/SE/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}.fq.gz"
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.final_unmap.fq"
         ),
     output:
         INTERNALDIR / "fastq/unmapped/{sample}_{rn}_{rd}.fq.gz",
+    params:
+        # Each mate is written by its own job: R1 -> -1, R2 -> -2.  Both jobs
+        # read the same interleaved unmapped BAM (prismalign -u output).
+        mate=lambda wildcards: "-1" if wildcards.rd == "R1" else "-2",
     benchmark:
         BENCHDIR / "finalize_unmapped_fq_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
-        "cp {input} {output}"
+        """
+        # prismalign writes the final unmapped reads as an interleaved BAM;
+        # split into R1/R2 FASTQ (PE) or a single R1 stream (SE).
+        {PATH.samtools} fastq -F 0x900 {params.mate} {output} -0 /dev/null -s /dev/null -n {input}
+        """
 
 
 rule unmapped_qc:

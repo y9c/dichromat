@@ -85,7 +85,10 @@ def main():
             counts = {}
             with open(f, "r") as fh:
                 for line in fh:
-                    k, v = line.strip().split("\t")
+                    parts = line.strip().split("\t")
+                    if len(parts) < 2 or not parts[1]:
+                        continue
+                    k, v = parts[0], parts[1]
                     counts[k] = int(v)
 
             raw = counts.get("Raw", 0)

@@ -1,0 +1,83 @@
+# ============================================================================
+# prismalign pipeline config — m6A (A->G) N-color mapping
+#
+# Describes ONLY the mapping LOGIC (how to map). No data paths: references,
+# reads and outputs are bound on the CLI via each layer's `key`.
+#
+# Run:
+#   prismalign -p pipeline_m6A.yaml \
+#     -r contamination=/path/contamination.fa \
+#     -r transcript=/path/transcript.fa \
+#     -r genes=/path/genes.fa \
+#     -r genome=/path/GRCh38.fa \
+#     -1 R1.fq.gz -2 R2.fq.gz \
+#     -o transcript=/out/transcript.bam \
+#     -o genes=/out/genes.bam \
+#     -o genome=/out/genome.bam \
+#     -u /out/unmapped.bam -R /out/summary.tsv
+# ============================================================================
+
+threads: 128
+index_dir: internal_files/ref/map_index
+
+layers:
+  # ---- LAYER 0: contamination removal (hisat3n, self-converting) ----
+  - key: contamination
+    role: pre
+    engine: hisat3n
+    scheme: PLAIN              # hisat3n self-converts A->G; engine feeds original reads
+    mutation_classes:
+      - name: A_to_G
+        source: A
+        target: G
+      - name: C_to_T
+        source: C
+        target: T
+    engine_kwargs:
+      # Bacterial/contamination reference has no introns: disable splice-aware
+      # alignment (--no-spliced-alignment). NOTE: this flag makes hisat-3n
+      # ~5.8x slower, so only enable it for genuinely intron-less references.
+      no_splice: true
+      # Match the dichromat premap hisat3n parameters.
+      extra_args: "--np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8"
+    filter:
+      pre_gate: {}             # contamination gate (min_softclip=30, xm_factor=15)
+
+  # ---- LAYER 1: main map - genes (bwa-mem2, MK; masking layer, claims first) ----
+  - key: genes
+    role: main
+    engine: bwa-mem2
+    scheme: MK
+    filter:
+      min_mapping_ratio: 0.8
+      max_conversion_rates: [1.0, 0.33]
+    em: true
+
+  # ---- LAYER 2: main map - transcript (bwa-mem2, MK) ----
+  - key: transcript
+    role: main
+    engine: bwa-mem2
+    scheme: MK
+    filter:
+      min_mapping_ratio: 0.8
+      max_conversion_rates: [1.0, 0.33]
+
+  # ---- LAYER 3: genome rescue (hisat3n, spliced) ----
+  - key: genome
+    role: post
+    engine: hisat3n
+    scheme: PLAIN
+    splice: true
+    mutation_classes:
+      - name: A_to_G
+        source: A
+        target: G
+      - name: C_to_T
+        source: C
+        target: T
+    engine_kwargs:
+      # Match the dichromat remap hisat3n parameters (SPLICE_GENOME).
+      extra_args: "--avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5"
+    filter:
+      max_nm_ratio: 0.08
+    em: true
