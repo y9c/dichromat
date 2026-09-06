@@ -723,16 +723,27 @@ rule finalize_unmapped_fq:
     output:
         INTERNALDIR / "fastq/unmapped/{sample}_{rn}_{rd}.fq.gz",
     params:
-        # Each mate is written by its own job: R1 -> -1, R2 -> -2.  Both jobs
-        # read the same interleaved unmapped BAM (prismalign -u output).
-        mate=lambda wildcards: "-1" if wildcards.rd == "R1" else "-2",
+        # PE: each mate is written by its own job (R1 -> -1, R2 -> -2).  SE
+        # reads carry flag 4 (unmapped) but NOT the 0x40/0x80 mate flags, so
+        # ``samtools fastq -1``/``-o`` (which only write READ1/READ2) extract
+        # nothing; SE reads are classified as READ_OTHER and go to ``-0``.
+        # Both read the same unmapped BAM (prismalign -u).
+        mate=lambda wildcards: (
+            "-0"
+            if not is_pe(wildcards.sample, wildcards.rn)
+            else ("-1" if wildcards.rd == "R1" else "-2")
+        ),
+        # PE: the other mate stream is discarded; SE has no other stream.
+        other=lambda wildcards: "-0 /dev/null" if is_pe(wildcards.sample, wildcards.rn) else "",
     benchmark:
         BENCHDIR / "finalize_unmapped_fq_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
         """
         # prismalign writes the final unmapped reads as an interleaved BAM;
-        # split into R1/R2 FASTQ (PE) or a single R1 stream (SE).
-        {PATH.samtools} fastq -F 0x900 {params.mate} {output} -0 /dev/null -s /dev/null -n {input}
+        # split into R1/R2 FASTQ (PE) or a single R1 stream (SE).  For PE the
+        # mate flag is -1/-2 and the other mate goes to /dev/null; for SE the
+        # mate flag is -0 (READ_OTHER) and there is no other stream.
+        {PATH.samtools} fastq -F 0x900 {params.mate} {output} {params.other} -s /dev/null -n {input}
         """
 
 
@@ -750,7 +761,16 @@ rule unmapped_qc:
     benchmark:
         BENCHDIR / "unmapped_qc_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
-        "{PATH.falco} -o {params} {input}"
+        """
+        # falco cannot process an empty FASTQ (errors with \"invalid reads file
+        # format\"); if there are no unmapped reads, emit empty outputs instead.
+        if [ $(zcat {input} 2>/dev/null | wc -l) -eq 0 ]; then
+            mkdir -p $(dirname {output.html})
+            touch {output.html} {output.text} {output.summary}
+        else
+            {PATH.falco} -o {params} {input}
+        fi
+        """
 
 
 rule unmapped_report:
