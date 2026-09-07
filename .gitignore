@@ -7,7 +7,7 @@ eTAM_LOG_FINAL.txt
 
 # Build artifacts
 dichromat.sif
-etamseq.def
+*.def
 .apptainer_cache/
 
 # Development and Local tools
