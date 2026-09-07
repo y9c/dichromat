@@ -27,4 +27,4 @@ samples:
   Rep1:
     data:
       - R1: /data/project/changye/chye/projects/m6A_new/workspaces/workspace_ecoli_glori_genome/Rep1.fastq
-    adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX-XXXAGATCGGAAGAGCGTCGTGT"
+    adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX+XXXAGATCGGAAGAGCGTCGTGT"

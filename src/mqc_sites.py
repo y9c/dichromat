@@ -40,6 +40,10 @@ def main():
     parser.add_argument("summary_output")
     parser.add_argument("dist_output")
     parser.add_argument("depth_output")
+    # Legacy positional transcript/genome table outputs (optional: only used
+    # when no --reftype-table is given).
+    parser.add_argument("transcript_table_output", nargs="?")
+    parser.add_argument("genome_table_output", nargs="?")
     # Per-reftype motif-ratio table outputs: ``--reftype-table reftype=path``
     # (repeatable).  Config-driven so a genome-only run passes just
     # ``--reftype-table genome=...``; the historical transcript+genome cascade
@@ -66,7 +70,6 @@ def main():
             ("genome", args.genome_table_output),
         ]
         reftype_tables = {rt: p for rt, p in legacy if p}
-    del args.transcript_table_output, args.genome_table_output
 
     if not args.sites_file:
         logging.error("No sites file provided.")
