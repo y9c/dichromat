@@ -16,6 +16,15 @@ printf "$logo\n"
 # Get project directory
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Optional bind-mount of a local prismalign source tree over the container's
+# installed package, so a fixed/dev version is used without rebuilding the
+# image.  Empty (default) uses the container's own prismalign.
+PRISMALIGN_SRC="${PRISMALIGN_SRC:-}"
+PRISMALIGN_BIND=""
+if [ -n "$PRISMALIGN_SRC" ]; then
+    PRISMALIGN_BIND="-B ${PRISMALIGN_SRC}:/opt/app_venv/lib/python3.13/site-packages/prismalign "
+fi
+
 # Load Apptainer module (required for cluster environment)
 if [ -f /data/share/apps/modules/init/profile.sh ]; then
     source /data/share/apps/modules/init/profile.sh
@@ -117,7 +126,7 @@ echo "Running pipeline... (output logged to: ${LOGFILE})"
     --config batch="$BATCH" project_dir="${PROJECT_DIR}" \
     -j 100 \
     --use-singularity \
-    --singularity-args "-B /data -B ${PROJECT_DIR}/src:/pipeline/src " \
+    --singularity-args "-B /data -B ${PROJECT_DIR}/src:/pipeline/src ${PRISMALIGN_BIND}" \
     "${EXTRA_ARGS[@]}" >> "${LOGFILE}" 2>&1
 
 EXIT_CODE=$?
