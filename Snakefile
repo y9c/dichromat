@@ -241,7 +241,7 @@ rule all:
         "report_sites/filtered.tsv",
         "report_sites/filtered.annotated.tsv",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
-        expand(INTERNALDIR / "qc/{sample}.metrics.tsv", sample=SAMPLE2DATA.keys()),
+        expand(INTERNALDIR / "qc/rnaseq/{sample}.metrics.tsv", sample=SAMPLE2DATA.keys()),
         [
             INTERNALDIR / f"fastq/discarded/{sample}_{rn}_{rd}.fq.gz"
             for sample, v in SAMPLE2DATA.items()
@@ -277,6 +277,7 @@ This directory contains intermediate files for the `dichromat` pipeline.
 - `qc/trimming/`: Trimming reports from `cutseq`.
 - `qc/fastqc_trimmed/`: FastQC reports for trimmed reads.
 - `qc/fastqc_unmapped/`: FastQC reports for unmapped reads.
+- `qc/rnaseq/`: coralsnake rnaseqc per-sample metrics + gene/exon count tables.
 - `fastq/discarded/`: Reads discarded during trimming (adapter dimers, too-short, or low-quality).
 - `fastq/unmapped/`: Reads that failed to map to any reference.
 
@@ -924,17 +925,17 @@ rule rnaseq_qc:
         bam=INTERNALDIR / "bam/{sample}.genome.bam",
         gtf=REF["genome"]["gtf"],
     output:
-        metrics=INTERNALDIR / "qc/{sample}.metrics.tsv",
-        genes=INTERNALDIR / "qc/{sample}.gene_reads.tsv",
-        tpm=INTERNALDIR / "qc/{sample}.gene_tpm.tsv",
-        exons=INTERNALDIR / "qc/{sample}.exon_reads.tsv",
+        metrics=INTERNALDIR / "qc/rnaseq/{sample}.metrics.tsv",
+        genes=INTERNALDIR / "qc/rnaseq/{sample}.gene_reads.tsv",
+        tpm=INTERNALDIR / "qc/rnaseq/{sample}.gene_tpm.tsv",
+        exons=INTERNALDIR / "qc/rnaseq/{sample}.exon_reads.tsv",
     threads: 8
     benchmark:
         BENCHDIR / "rnaseq_qc_{sample}.benchmark.txt"
     run:
         # coralsnake qc writes into --outdir; run it there and move outputs.
         import shutil
-        outdir = INTERNALDIR / "qc"
+        outdir = INTERNALDIR / "qc/rnaseq"
         outdir.mkdir(parents=True, exist_ok=True)
         # PE if any run of the sample is paired-end.
         is_pe_sample = any(is_pe(sample, rn) for rn in SAMPLE2DATA[sample])
