@@ -38,6 +38,14 @@ def combined_function(x, a, b, c, d, e):
 
 
 def fit_motif(x_data, y_data):
+    # Convert to plain float64 numpy arrays once.  The model functions call
+    # np.exp on x/y, and operating on polars Series triggers a slow
+    # __array_ufunc__ conversion on every call (~20x slower).  numpy float64
+    # arrays give numerically identical results (same exp on same values) while
+    # being far faster.
+    x_data = np.asarray(x_data, dtype=float)
+    y_data = np.asarray(y_data, dtype=float)
+
     # Check minimum data requirements
     if len(x_data) < 5:
         raise ValueError(f"Insufficient data points: {len(x_data)} (minimum 5)")
@@ -55,8 +63,8 @@ def fit_motif(x_data, y_data):
     # Fit the m6A level using all data points
     params_m6A, _ = curve_fit(
         expected_m6A_level,
-        x_data.filter(x_data < 0.5),
-        y_data.filter(x_data < 0.5),
+        x_data[x_data < 0.5],
+        y_data[x_data < 0.5],
         p0=initial_guesses_m6A,
         bounds=bounds_m6A,
         maxfev=1_000,

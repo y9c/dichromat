@@ -79,8 +79,11 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Create workspace directory
-WORKSPACE_DIR="${PROJECT_DIR}/workspace_${BATCH}"
+# Workspace root: where per-batch output workspaces live.  Defaults to the
+# shared workspaces/ directory next to the project root (the input reference
+# workspaces also live there).  Override with WORKSPACE_ROOT=/path.
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-${PROJECT_DIR}/../workspaces}"
+WORKSPACE_DIR="${WORKSPACE_ROOT}/workspace_${BATCH}"
 mkdir -p "${WORKSPACE_DIR}"
 
 # Set up log file
