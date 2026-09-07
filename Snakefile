@@ -1150,14 +1150,24 @@ rule run_countmut:
             config.get("countmut_trim", 2),
             config.get("countmut_trim", 2),
         ),
-        # Target-base sites only (like the old bridge's row filter
-        # `ref == base and u+m > 0`).  -p sees both-strand all-group totals,
+        # Target-base sites only.  `base` is a strand-aware reference base:
+        # it is the target base when the site is a mutation site on EITHER
+        # strand (genomic ref = target = '+' strand site; genomic ref =
+        # complement = '-' strand site), so `base == 'A'` keeps A-sites on
+        # both strands automatically.  -p sees both-strand all-group totals,
         # so a strand row with only group-0 counts may still appear; all
-        # downstream consumers guard on u1+m1 > 0.
+        # downstream consumers guard on u1+m1>0.
         site_filter=lambda wildcards: (
-            "ref == 'C' and (c + t) > 0"
+            "base == 'C' and (c + t) > 0"
             if config.get("pileup_ct", False)
-            else "ref == 'A' and (a + g) > 0"
+            else "base == 'A' and (a + g) > 0"
+        ),
+        # Emit only the strand whose reference base equals the target base
+        # (drops the spurious complement-strand rows).  For A->G m6A this is
+        # 'A'; for C->T it is 'C'.
+        target_base=lambda wildcards: (
+            "C" if config.get("pileup_ct", False)
+            else str(config.get("base_change", "A,G").split(",")[0]).upper()
         ),
         # \t is expanded by the C core (\t in --fmt-header; Lua string
         # literal in --output-format), so the shell sees plain text.
@@ -1171,7 +1181,7 @@ rule run_countmut:
     benchmark:
         BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
     shell:
-        "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} -e \"{params.router}\" -p \"{params.site_filter}\" --motif-pad 15 --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\" > /dev/null"
+        "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} -e \"{params.router}\" -p \"{params.site_filter}\" --target-base {params.target_base} --motif-pad 15 --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\" > /dev/null"
 
 
 rule pileup_base:
