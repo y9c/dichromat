@@ -275,8 +275,8 @@ This directory contains intermediate files for the `dichromat` pipeline.
 
 ### 1. `qc/` & `fastq/`
 - `qc/trimming/`: Trimming reports from `cutseq`.
-- `qc/fastqc_trimmed/`: FastQC reports for trimmed reads.
-- `qc/fastqc_unmapped/`: FastQC reports for unmapped reads.
+- `qc/trimmed/`: FastQC reports for trimmed reads.
+- `qc/unmapped/`: FastQC reports for unmapped reads.
 - `qc/rnaseq/`: coralsnake rnaseqc per-sample metrics + gene/exon count tables.
 - `fastq/discarded/`: Reads discarded during trimming (adapter dimers, too-short, or low-quality).
 - `fastq/unmapped/`: Reads that failed to map to any reference.
@@ -489,13 +489,13 @@ rule qc_trimmed:
             / f"trim/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}_{wildcards.rd}.fq.gz"
         ),
     output:
-        html=INTERNALDIR / "qc/fastqc_trimmed/{sample}_{rn}_{rd}/fastqc_report.html",
-        text=INTERNALDIR / "qc/fastqc_trimmed/{sample}_{rn}_{rd}/fastqc_data.txt",
-        summary=INTERNALDIR / "qc/fastqc_trimmed/{sample}_{rn}_{rd}/summary.txt",
+        html=INTERNALDIR / "qc/trimmed/{sample}_{rn}_{rd}/fastqc_report.html",
+        text=INTERNALDIR / "qc/trimmed/{sample}_{rn}_{rd}/fastqc_data.txt",
+        summary=INTERNALDIR / "qc/trimmed/{sample}_{rn}_{rd}/summary.txt",
     params:
         # falco >= 2.0 creates a subdir named after the input basename inside -o,
         # so point -o at the parent dir (falco makes the {sample}_{rn}_{rd} dir).
-        lambda wildcards: INTERNALDIR / "qc/fastqc_trimmed",
+        lambda wildcards: INTERNALDIR / "qc/trimmed",
     benchmark:
         BENCHDIR / "qc_trimmed_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
@@ -505,7 +505,7 @@ rule qc_trimmed:
 rule report_qc_trimmed:
     input:
         [
-            INTERNALDIR / f"qc/fastqc_trimmed/{sample}_{rn}_{rd}/fastqc_data.txt"
+            INTERNALDIR / f"qc/trimmed/{sample}_{rn}_{rd}/fastqc_data.txt"
             for sample, v in SAMPLE2DATA.items()
             for rn, v2 in v.items()
             for rd in v2.keys()
@@ -792,13 +792,13 @@ rule unmapped_qc:
     input:
         INTERNALDIR / "fastq/unmapped/{sample}_{rn}_{rd}.fq.gz",
     output:
-        html=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/fastqc_report.html",
-        text=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/fastqc_data.txt",
-        summary=INTERNALDIR / "qc/fastqc_unmapped/{sample}_{rn}_{rd}/summary.txt",
+        html=INTERNALDIR / "qc/unmapped/{sample}_{rn}_{rd}/fastqc_report.html",
+        text=INTERNALDIR / "qc/unmapped/{sample}_{rn}_{rd}/fastqc_data.txt",
+        summary=INTERNALDIR / "qc/unmapped/{sample}_{rn}_{rd}/summary.txt",
     params:
         # falco >= 2.0 creates a subdir named after the input basename inside -o,
         # so point -o at the parent dir (falco makes the {sample}_{rn}_{rd} dir).
-        lambda wildcards: INTERNALDIR / "qc/fastqc_unmapped",
+        lambda wildcards: INTERNALDIR / "qc/unmapped",
     benchmark:
         BENCHDIR / "unmapped_qc_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
@@ -817,7 +817,7 @@ rule unmapped_qc:
 rule unmapped_report:
     input:
         [
-            INTERNALDIR / f"qc/fastqc_unmapped/{s}_{r}_{i}/fastqc_data.txt"
+            INTERNALDIR / f"qc/unmapped/{s}_{r}_{i}/fastqc_data.txt"
             for s, v in SAMPLE2DATA.items()
             for r, v2 in v.items()
             for i in ["R1", "R2"]
