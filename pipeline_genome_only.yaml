@@ -19,6 +19,10 @@ index_dir: internal_files/ref/map_index
 
 layers:
   # ---- genome (bwa-mem2, MK; single layer) ----
+  # Bacteria GLORI reads are short (20-34 nt) and align uniquely but with
+  # MAPQ=0 (bwa-mem2 is conservative for short reads).  prismalign keeps
+  # MAPQ-0 hits and re-scores them (min_mapping_ratio / max_mismatches /
+  # conversion caps), so short reads are not pre-dropped.
   - key: genome
     role: post
     site: true
