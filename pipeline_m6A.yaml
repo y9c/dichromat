@@ -60,6 +60,7 @@ layers:
   # Transcripts have a defined 5'->3' direction: map forward-only (channel 0).
   - key: transcript
     role: main
+    site: true
     engine: bwa-mem2
     scheme: MK
     ref_strand: fwd
@@ -70,6 +71,7 @@ layers:
   # ---- LAYER 3: genome rescue (hisat3n, spliced) ----
   - key: genome
     role: post
+    site: true
     engine: hisat3n
     scheme: PLAIN
     splice: true

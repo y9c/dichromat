@@ -40,12 +40,33 @@ def main():
     parser.add_argument("summary_output")
     parser.add_argument("dist_output")
     parser.add_argument("depth_output")
-    parser.add_argument("transcript_table_output")
-    parser.add_argument("genome_table_output")
+    # Per-reftype motif-ratio table outputs: ``--reftype-table reftype=path``
+    # (repeatable).  Config-driven so a genome-only run passes just
+    # ``--reftype-table genome=...``; the historical transcript+genome cascade
+    # passes both.  Falls back to the legacy positional transcript/genome pair
+    # when no --reftype-table is given.
+    parser.add_argument("--reftype-table", nargs="+", action="append",
+                        default=[], metavar="reftype=path")
     parser.add_argument("--motif-files", nargs="+")
     parser.add_argument("--sites-file", nargs="+")
     parser.add_argument("--target-base", default="A")
     args = parser.parse_args()
+
+    # Normalize --reftype-table into an ordered {reftype: output} map.
+    reftype_tables = {}
+    for group in args.reftype_table:
+        for item in group:
+            if "=" in item:
+                rt, path = item.split("=", 1)
+                reftype_tables[rt] = path
+    # Legacy positional fallback (transcript_table_output, genome_table_output).
+    if not reftype_tables:
+        legacy = [
+            ("transcript", args.transcript_table_output),
+            ("genome", args.genome_table_output),
+        ]
+        reftype_tables = {rt: p for rt, p in legacy if p}
+    del args.transcript_table_output, args.genome_table_output
 
     if not args.sites_file:
         logging.error("No sites file provided.")
@@ -91,8 +112,7 @@ def main():
                     fh.write("\t".join(["Motif", "reftype", "Ratio"]) + "\n")
                     for m, t, r in sorted(rows, key=lambda x: (x[1], x[0])):
                         fh.write("\t".join([str(m), str(t), _fmt(r)]) + "\n")
-                for reftype, out_path in [("transcript", args.transcript_table_output),
-                                          ("genome", args.genome_table_output)]:
+                for reftype, out_path in reftype_tables.items():
                     sub = sorted([(m, r) for m, t, r in rows if t == reftype],
                                  key=lambda x: x[0])
                     if not sub:

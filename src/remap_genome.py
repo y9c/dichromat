@@ -117,37 +117,46 @@ class ParallelGzipWriter:
 
 def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file,
                                  output_file, min_depth=1):
-    gene_order, exons, gidx = parse_transcript(transcript_file)
+    # An absent transcript layer (empty ``gene_df_file``/``transcript_file``)
+    # is the genome-only case: the genome pileup is passed straight through
+    # with empty gene annotation.  Otherwise transcript sites are lifted to
+    # genome coords (strand-aware) and unioned with genome sites.
+    has_transcript = bool(gene_df_file and transcript_file)
+    gene_order, exons, gidx = parse_transcript(transcript_file) if has_transcript \
+        else ([], [], {})
     con = duckdb.connect()
-    # Bulk-load the exon map. con.executemany("INSERT ...", rows) is ~1 ms per
-    # row in duckdb (~140 s for 150k exons!) - instead stage the rows in a temp
-    # TSV and let duckdb's vectorized CSV reader load them in well under a second.
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".tsv", prefix="remap_txmap_", delete=False,
-        dir=str(Path(output_file).parent),
-    ) as _tf:
-        _tf.write("GeneName\tChrom\tStrand\tg_start\tg_end\ttx_start\ttx_end\n")
-        _tf.writelines("\t".join(map(str, e)) + "\n" for e in exons)
-        _txmap_tsv = _tf.name
-    try:
-        con.execute(f"""
-            CREATE OR REPLACE TEMP TABLE txmap AS
-            SELECT c0 AS GeneName, c1 AS Chrom, c2 AS Strand,
-                   CAST(c3 AS BIGINT) AS g_start,
-                   CAST(c4 AS BIGINT) AS g_end,
-                   CAST(c5 AS BIGINT) AS tx_start,
-                   CAST(c6 AS BIGINT) AS tx_end
-            FROM read_csv('{_txmap_tsv}', delim='\t', header=true,
-                          columns={{'c0':'VARCHAR','c1':'VARCHAR','c2':'VARCHAR',
-                                    'c3':'VARCHAR','c4':'VARCHAR','c5':'VARCHAR',
-                                    'c6':'VARCHAR'}})
-        """)
-    finally:
-        os.unlink(_txmap_tsv)
+    if has_transcript:
+        # Bulk-load the exon map. con.executemany("INSERT ...", rows) is ~1 ms
+        # per row in duckdb (~140 s for 150k exons!) - instead stage the rows
+        # in a temp TSV and let duckdb's vectorized CSV reader load them in
+        # well under a second.
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".tsv", prefix="remap_txmap_", delete=False,
+            dir=str(Path(output_file).parent),
+        ) as _tf:
+            _tf.write("GeneName\tChrom\tStrand\tg_start\tg_end\ttx_start\ttx_end\n")
+            _tf.writelines("\t".join(map(str, e)) + "\n" for e in exons)
+            _txmap_tsv = _tf.name
+        try:
+            con.execute(f"""
+                CREATE OR REPLACE TEMP TABLE txmap AS
+                SELECT c0 AS GeneName, c1 AS Chrom, c2 AS Strand,
+                       CAST(c3 AS BIGINT) AS g_start,
+                       CAST(c4 AS BIGINT) AS g_end,
+                       CAST(c5 AS BIGINT) AS tx_start,
+                       CAST(c6 AS BIGINT) AS tx_end
+                FROM read_csv('{_txmap_tsv}', delim='\t', header=true,
+                              columns={{'c0':'VARCHAR','c1':'VARCHAR','c2':'VARCHAR',
+                                        'c3':'VARCHAR','c4':'VARCHAR','c5':'VARCHAR',
+                                        'c6':'VARCHAR'}})
+            """)
+        finally:
+            os.unlink(_txmap_tsv)
     gname = {i: g for g, i in gidx.items()}
 
+    # Count columns come from the genome pileup (the union's schema source).
     count_cols = [c[0] for c in con.sql(
-        f"DESCRIBE SELECT * FROM read_parquet('{gene_df_file}')").fetchall()
+        f"DESCRIBE SELECT * FROM read_parquet('{genome_df_file}')").fetchall()
         if c[0].startswith(("Uncon_", "Depth_"))]
     depth_cols = [c for c in count_cols if c.startswith("Depth_")]
 
@@ -178,54 +187,73 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file,
 
     for batch in batches:
         inl = ",".join(q(c) for c in batch)
-        rel_genes = [r[0] for r in con.sql(
-            f"SELECT DISTINCT GeneName FROM txmap WHERE Chrom IN ({inl})").fetchall()]
-        gin = ",".join(q(g) for g in rel_genes) or "''"
-
-        con.execute(f"""
-            CREATE OR REPLACE TEMP TABLE mapped_sites AS
-            SELECT COALESCE(t.Chrom, gp.chrom) AS Chrom,
-                   CAST(CASE WHEN t.Strand = '+' THEN
-                        t.g_start + (gp."Pos" - 1 - t.tx_start) + 1
-                        ELSE t.g_end - (gp."Pos" - 1 - t.tx_start) END AS BIGINT) AS Pos,
-                   COALESCE(t.Strand, '.') AS "Strand",
-                   gp.chrom AS GeneName,
-                   CAST(gp."Pos" AS BIGINT) AS GenePos,
-                   gp."Motif" AS Motif,
-                   {cnt_cast}
-            FROM read_parquet('{gene_df_file}') AS gp
-            JOIN txmap t ON t.GeneName = gp.chrom
-            WHERE gp.chrom IN ({gin})
-              AND (gp."Pos" - 1 >= t.tx_start AND gp."Pos" - 1 < t.tx_end)
-        """)
-        con.execute(f"""
-            CREATE OR REPLACE TEMP TABLE raw_sites AS
-            SELECT Chrom, CAST(Pos AS BIGINT) AS Pos, "Strand",
-                   CAST(NULL AS VARCHAR) AS GeneName,
-                   CAST(NULL AS BIGINT) AS GenePos,
-                   "Motif", {cnt_cast}
-            FROM read_parquet('{genome_df_file}') AS rp
-            WHERE Chrom IN ({inl})
-        """)
         hav = f"(({dep_sum}) >= {int(min_depth)})" if depth_cols else "TRUE"
-        rows = con.sql(f"""
-            WITH u AS (SELECT * FROM mapped_sites UNION ALL BY NAME SELECT * FROM raw_sites),
-            grp AS (
+        if has_transcript:
+            rel_genes = [r[0] for r in con.sql(
+                f"SELECT DISTINCT GeneName FROM txmap WHERE Chrom IN ({inl})").fetchall()]
+            gin = ",".join(q(g) for g in rel_genes) or "''"
+
+            con.execute(f"""
+                CREATE OR REPLACE TEMP TABLE mapped_sites AS
+                SELECT COALESCE(t.Chrom, gp.chrom) AS Chrom,
+                       CAST(CASE WHEN t.Strand = '+' THEN
+                            t.g_start + (gp."Pos" - 1 - t.tx_start) + 1
+                            ELSE t.g_end - (gp."Pos" - 1 - t.tx_start) END AS BIGINT) AS Pos,
+                       COALESCE(t.Strand, '.') AS "Strand",
+                       gp.chrom AS GeneName,
+                       CAST(gp."Pos" AS BIGINT) AS GenePos,
+                       gp."Motif" AS Motif,
+                       {cnt_cast}
+                FROM read_parquet('{gene_df_file}') AS gp
+                JOIN txmap t ON t.GeneName = gp.chrom
+                WHERE gp.chrom IN ({gin})
+                  AND (gp."Pos" - 1 >= t.tx_start AND gp."Pos" - 1 < t.tx_end)
+            """)
+            con.execute(f"""
+                CREATE OR REPLACE TEMP TABLE raw_sites AS
+                SELECT Chrom, CAST(Pos AS BIGINT) AS Pos, "Strand",
+                       CAST(NULL AS VARCHAR) AS GeneName,
+                       CAST(NULL AS BIGINT) AS GenePos,
+                       "Motif", {cnt_cast}
+                FROM read_parquet('{genome_df_file}') AS rp
+                WHERE Chrom IN ({inl})
+            """)
+            rows = con.sql(f"""
+                WITH u AS (SELECT * FROM mapped_sites UNION ALL BY NAME SELECT * FROM raw_sites),
+                grp AS (
+                    SELECT Chrom, Pos, "Strand",
+                           list(GeneName) FILTER (WHERE GeneName IS NOT NULL) AS gnames,
+                           list(GenePos) FILTER (WHERE GenePos IS NOT NULL)  AS gposs,
+                           MIN(Motif) AS Motif,
+                           {cnt_sum}
+                    FROM u
+                    GROUP BY Chrom, Pos, "Strand"
+                    HAVING {hav}
+                )
                 SELECT Chrom, Pos, "Strand",
-                       list(GeneName) FILTER (WHERE GeneName IS NOT NULL) AS gnames,
-                       list(GenePos) FILTER (WHERE GenePos IS NOT NULL)  AS gposs,
-                       MIN(Motif) AS Motif,
-                       {cnt_sum}
-                FROM u
-                GROUP BY Chrom, Pos, "Strand"
-                HAVING {hav}
-            )
-            SELECT Chrom, Pos, "Strand",
-                   gnames, gposs, Motif,
-                   {", ".join(f'"{c}"' for c in count_cols)}
-            FROM grp
-            ORDER BY Chrom, Pos, "Strand"
-        """).fetchall()
+                       gnames, gposs, Motif,
+                       {", ".join(f'"{c}"' for c in count_cols)}
+                FROM grp
+                ORDER BY Chrom, Pos, "Strand"
+            """).fetchall()
+        else:
+            # Genome-only: no transcript sites to lift; the genome pileup IS
+            # the sites table (empty gene annotation).  The depth filter uses
+            # an aggregate, so fetch all and filter in Python (the pileup is
+            # already one row per site).
+            rows = con.sql(f"""
+                SELECT Chrom, CAST(Pos AS BIGINT) AS Pos, "Strand",
+                       CAST(NULL AS VARCHAR) AS GeneName,
+                       CAST(NULL AS BIGINT) AS GenePos,
+                       "Motif", {cnt_cast}
+                FROM read_parquet('{genome_df_file}')
+                ORDER BY Chrom, Pos, "Strand"
+            """).fetchall()
+            if depth_cols:
+                # depth_cols indices: count_cols = Uncon_* then Depth_*; the
+                # row layout is Chrom,Pos,Strand,GeneName,GenePos,Motif,counts.
+                di = [6 + count_cols.index(c) for c in depth_cols]
+                rows = [r for r in rows if sum(r[i] or 0 for i in di) >= int(min_depth)]
 
         # Fast path: the csv.writer below runs with QUOTE_NONE, which RAISES if
         # any field contains the delimiter/quotechar - so every value it would
@@ -267,11 +295,14 @@ def remap_and_join_files_parquet(gene_df_file, genome_df_file, transcript_file,
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("-t", "--transcript-file", required=True)
-    ap.add_argument("-a", "--gene-file", required=True)
+    ap.add_argument("-t", "--transcript-file", default=None)
+    ap.add_argument("-a", "--gene-file", default=None)
     ap.add_argument("-b", "--genome-file", required=True)
     ap.add_argument("-o", "--output-file", required=True)
     ap.add_argument("--min-depth", type=int, default=1)
     a = ap.parse_args()
-    remap_and_join_files_parquet(a.gene_file, a.genome_file, a.transcript_file,
-                                 a.output_file, a.min_depth)
+    # An absent transcript layer (no ``-t``/``-a``) is the genome-only case:
+    # the genome pileup is passed straight through with empty gene annotation.
+    remap_and_join_files_parquet(
+        a.gene_file or "", a.genome_file, a.transcript_file or "",
+        a.output_file, a.min_depth)

@@ -44,3 +44,8 @@ secondary_change: ""
 # Minimum depth for sites to be included in merged output
 # Lower values include more sites but may increase noise
 min_merged_depth: 1
+
+# prismalign pipeline YAML declaring the mapping layers (order = priority).
+# The Snakefile parses this to derive which reftypes are active; a genome-only
+# run (e.g. bacteria) points this at a YAML with just the `genome` layer.
+pipeline: pipeline_m6A.yaml

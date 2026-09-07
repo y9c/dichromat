@@ -176,11 +176,41 @@ for s, v in samples_dict.items():
 HAS_GENES = bool(REF.get("genes"))
 HAS_CONTAM = bool(REF.get("contamination"))
 
-REFTYPES = (
-    (["contamination"] if HAS_CONTAM else [])
-    + (["genes"] if HAS_GENES else [])
-    + ["transcript", "genome"]
-)
+# The prismalign pipeline YAML is the single source of truth for which mapping
+# layers run (and their order).  Parse it here so the Snakefile's reftypes,
+# reference binding and downstream rules all follow the declared layers
+# instead of hard-coding a transcript+genome cascade.  A genome-only run (e.g.
+# bacteria with no spliced transcriptome) uses a pipeline YAML with just the
+# ``genome`` layer and the pipeline automatically skips the transcript layer
+# (reference build, index, mapping, liftover, merge).
+PIPELINE_YAML = config.get("pipeline", "pipeline_m6A.yaml")
+PIPELINE_PATH = Path(workflow.basedir) / PIPELINE_YAML
+if not PIPELINE_PATH.exists():
+    raise SystemExit(f"pipeline YAML not found: {PIPELINE_PATH}")
+with open(PIPELINE_PATH) as _pf:
+    _pipeline_cfg = yaml.safe_load(_pf)
+_pipeline_layers = [l for l in _pipeline_cfg.get("layers", []) if l.get("key")]
+LAYER_KEYS = [str(l.get("key")) for l in _pipeline_layers]
+HAS_TRANSCRIPT = "transcript" in LAYER_KEYS
+HAS_GENOME = "genome" in LAYER_KEYS
+# The genome layer's engine decides how its reference is bound: a spliced
+# hisat3n genome layer uses a prebuilt ``.3n`` index prefix, while a plain
+# bwa-mem2 genome layer (e.g. genome-only bacteria) is bound by FASTA only.
+_GENOME_LAYER = next((l for l in _pipeline_layers if l.get("key") == "genome"), {})
+GENOME_ENGINE = str(_GENOME_LAYER.get("engine", ""))
+GENOME_HAS_HISAT3N = "hisat3n" in GENOME_ENGINE
+
+# Active reftypes in pipeline-layer order (contamination/genes are the
+# optional pre/main masks; transcript+genome the main mapping layers).
+REFTYPES = LAYER_KEYS
+
+# Site-calling reftypes: the layers that produce sites (declared with
+# ``site: true`` in the pipeline YAML).  Defaults to the main mapping layers
+# (transcript + genome) when no layer declares ``site``.
+_site_layers = [str(l.get("key")) for l in _pipeline_layers if l.get("site")]
+SITE_REFTYPES = _site_layers or [
+    r for r in LAYER_KEYS if r in ("transcript", "genome")
+]
 
 
 def is_pe(sample, rn):
@@ -516,12 +546,12 @@ rule map_cascade:
         cont_fa=INTERNALDIR / "ref/contamination.fa" if HAS_CONTAM else [],
         cont_idx=INTERNALDIR / "ref/contamination/index.indexed" if HAS_CONTAM else [],
         genes_fa=INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
-        tx_fa=INTERNALDIR / "ref/transcript.fa",
+        tx_fa=INTERNALDIR / "ref/transcript.fa" if HAS_TRANSCRIPT else [],
         genome_fa=REF["genome"]["fa"],
     output:
         contam=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.contam.bam") if HAS_CONTAM else [],
         genes=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genes.bam") if HAS_GENES else [],
-        tx=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.transcript.bam"),
+        tx=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.transcript.bam") if HAS_TRANSCRIPT else [],
         genome=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genome.bam"),
         unmap=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.final_unmap.fq"),
         summary=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.summary"),
@@ -529,7 +559,8 @@ rule map_cascade:
     benchmark:
         BENCHDIR / "map_cascade_{libmode}_{sample}_{rn}.benchmark.txt"
     params:
-        pipeline=str(Path(workflow.basedir) / "pipeline_m6A.yaml"),
+        # The prismalign pipeline YAML (declares which layers run).
+        pipeline=str(PIPELINE_PATH),
         max_mismatches=config.get("max_mismatches", 2),
         # The genome hisat-3n index prefix is a directory-style prefix (not a
         # single file), so it is referenced directly (not via input, which
@@ -542,9 +573,13 @@ rule map_cascade:
         genes_ref=lambda wildcards, input: (
             f"-r genes={input.genes_fa}" if HAS_GENES else ""
         ),
-        tx_ref=lambda wildcards, input: f"-r transcript={input.tx_fa}",
+        tx_ref=lambda wildcards, input: (
+            f"-r transcript={input.tx_fa}" if HAS_TRANSCRIPT else ""
+        ),
         genome_ref=lambda wildcards, input: (
             f"-r genome={input.genome_fa}:{REF['genome']['hisat3n']}"
+            if GENOME_HAS_HISAT3N
+            else f"-r genome={input.genome_fa}"
         ),
         cont_out=lambda wildcards, output: (
             f"-o contamination={output.contam}" if HAS_CONTAM else ""
@@ -552,7 +587,9 @@ rule map_cascade:
         genes_out=lambda wildcards, output: (
             f"-o genes={output.genes}" if HAS_GENES else ""
         ),
-        tx_out=lambda wildcards, output: f"-o transcript={output.tx}",
+        tx_out=lambda wildcards, output: (
+            f"-o transcript={output.tx}" if HAS_TRANSCRIPT else ""
+        ),
         genome_out=lambda wildcards, output: f"-o genome={output.genome}",
         r2=lambda wildcards, input: (
             f"-2 {input.fq2}" if is_pe(wildcards.sample, wildcards.rn) else ""
@@ -675,6 +712,8 @@ rule finalize_mainmap_transcript_bam:
         lambda wildcards: (
             TEMPDIR
             / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.transcript.bam"
+            if HAS_TRANSCRIPT
+            else []
         ),
     output:
         INTERNALDIR / "bam/per_run/{sample}_{rn}.transcript.bam",
@@ -874,11 +913,11 @@ rule stat_dedup:
 
 rule liftover_transcript_to_genome:
     input:
-        transcripts=INTERNALDIR / "bam/{sample}.transcript.bam",
+        transcripts=INTERNALDIR / "bam/{sample}.transcript.bam" if HAS_TRANSCRIPT else [],
         genome=INTERNALDIR / "bam/{sample}.genome.bam",
-        info=INTERNALDIR / "ref/transcript.tsv",
+        info=INTERNALDIR / "ref/transcript.tsv" if HAS_TRANSCRIPT else [],
     output:
-        transcripts=temp(TEMPDIR / "liftover/{sample}.transcript.bam"),
+        transcripts=temp(TEMPDIR / "liftover/{sample}.transcript.bam") if HAS_TRANSCRIPT else [],
         bam=INTERNALDIR / "liftover_bam/{sample}.bam",
     params:
         fai=REF["genome"]["fa"] + ".fai",
@@ -887,8 +926,14 @@ rule liftover_transcript_to_genome:
         BENCHDIR / "liftover_transcript_to_genome_{sample}.benchmark.txt"
     shell:
         """
-        {PATH.coralsnake} liftover -t {threads} -i {input.transcripts} -o {output.transcripts} -a {input.info} -f {params.fai}
-        {PATH.samtools} cat {output.transcripts} {input.genome} | {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam}
+        if [ -n '{input.transcripts}' ] && [ -s '{input.transcripts}' ]; then
+            {PATH.coralsnake} liftover -t {threads} -i {input.transcripts} -o {output.transcripts} -a {input.info} -f {params.fai}
+            {PATH.samtools} cat {output.transcripts} {input.genome} | {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam}
+        else
+            # Genome-only run: no transcript layer to liftover; just copy the
+            # genome BAM through (keeps the downstream liftover_bam contract).
+            {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam} {input.genome}
+        fi
         """
 
 
@@ -912,8 +957,16 @@ rule count_reads:
             INTERNALDIR / "stats/combined/{sample}.genes.count" if HAS_GENES else []
         ),
         count4=(INTERNALDIR / "stats/dedup/{sample}.genes.count" if HAS_GENES else []),
-        count5=INTERNALDIR / "stats/combined/{sample}.transcript.count",
-        count6=INTERNALDIR / "stats/dedup/{sample}.transcript.count",
+        count5=(
+            INTERNALDIR / "stats/combined/{sample}.transcript.count"
+            if HAS_TRANSCRIPT
+            else []
+        ),
+        count6=(
+            INTERNALDIR / "stats/dedup/{sample}.transcript.count"
+            if HAS_TRANSCRIPT
+            else []
+        ),
         count7=INTERNALDIR / "stats/combined/{sample}.genome.count",
         count8=INTERNALDIR / "stats/dedup/{sample}.genome.count",
     output:
@@ -1164,9 +1217,19 @@ rule join_pileup_table:
 
 
 rule merge_gene_and_genome_table:
+    """Merge the site-calling pileups into the final sites table.
+
+    With a transcript layer present, remap_genome lifts transcript sites to
+    genome coords (strand-aware) and unions with genome sites.  For a
+    genome-only run there is no transcript layer: the genome pileup is passed
+    straight through (empty gene annotation), so the sites table keeps the
+    same Chrom/Pos/Strand/GeneName/GenePos/Motif schema.
+    """
     input:
-        info=INTERNALDIR / "ref/transcript.tsv",
-        transcripts=INTERNALDIR / "pileup/transcript.parquet",
+        info=INTERNALDIR / "ref/transcript.tsv" if HAS_TRANSCRIPT else [],
+        transcripts=(
+            INTERNALDIR / "pileup/transcript.parquet" if HAS_TRANSCRIPT else []
+        ),
         genome=INTERNALDIR / "pileup/genome.parquet",
     output:
         "report_sites/sites.tsv.gz",
@@ -1175,9 +1238,13 @@ rule merge_gene_and_genome_table:
         BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
     resources:
         runtime=720
+    params:
+        # No transcript layer -> omit -t/-a; remap_genome passes the genome
+        # pileup straight through (empty gene annotation).
+        tx_args="" if not HAS_TRANSCRIPT else "-t {input.info} -a {input.transcripts}",
     shell:
         """
-        {PATH.remap_genome} -t {input.info} -a {input.transcripts} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
+        {PATH.remap_genome} {params.tx_args} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
         """
 
 
@@ -1224,12 +1291,7 @@ rule mqc_aggregate_mapping_stats:
         dedup_logs=expand(
             INTERNALDIR / "stats/dedup/{sample}.{reftype}.log",
             sample=SAMPLE2DATA.keys(),
-            reftype=[
-                r
-                for r in ["genome", "transcript", "genes", "contamination"]
-                if (r != "genes" or HAS_GENES)
-                and (r != "contamination" or HAS_CONTAM)
-            ],
+            reftype=REFTYPES,
         ),
         trim_jsons=expand(
             INTERNALDIR / "qc/trimming/{sample}_{rn}_mqc.tsv",
@@ -1254,21 +1316,26 @@ rule mqc_aggregate_site_stats:
         motifs=expand(
             INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
             sample=SAMPLE2DATA.keys(),
-            reftype=["transcript", "genome"],
+            reftype=SITE_REFTYPES,
         ),
         sites_file=[
-            INTERNALDIR / "pileup/genome.parquet",
-            INTERNALDIR / "pileup/transcript.parquet",
+            INTERNALDIR / f"pileup/{r}.parquet" for r in SITE_REFTYPES
         ],
     output:
         motifs=INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
         site_sum=INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
         site_dist=INTERNALDIR / "stats/mqc/sites/site_distribution_mqc.tsv",
         site_depth=INTERNALDIR / "stats/mqc/sites/site_depth_mqc.tsv",
-        motif_transcript=INTERNALDIR / "stats/mqc/sites/motif_ratio_transcript_mqc.tsv",
-        motif_genome=INTERNALDIR / "stats/mqc/sites/motif_ratio_genome_mqc.tsv",
+        reftype_tables=expand(
+            INTERNALDIR / "stats/mqc/sites/motif_ratio_{reftype}_mqc.tsv",
+            reftype=SITE_REFTYPES,
+        ),
     params:
         target_base=config.get("base_change", "A,G").split(",")[0],
+        reftype_tables=lambda wildcards, output: " ".join(
+            f"--reftype-table {r}={output.reftype_tables[i]}"
+            for i, r in enumerate(SITE_REFTYPES)
+        ),
     benchmark:
         BENCHDIR / "mqc_aggregate_site_stats.benchmark.txt"
     threads: 16
@@ -1277,7 +1344,7 @@ rule mqc_aggregate_site_stats:
     shell:
         """
         mkdir -p $(dirname {output.motifs})
-        {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} {output.site_depth} {output.motif_transcript} {output.motif_genome} --motif-files {input.motifs} --sites-file {input.sites_file} --target-base {params.target_base}
+        {PATH.mqc_sites} {output.motifs} {output.site_sum} {output.site_dist} {output.site_depth} {params.reftype_tables} --motif-files {input.motifs} --sites-file {input.sites_file} --target-base {params.target_base}
         """
 
 
@@ -1319,8 +1386,10 @@ rule generate_site_report:
         INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
         INTERNALDIR / "stats/mqc/sites/site_distribution_mqc.tsv",
         INTERNALDIR / "stats/mqc/sites/site_depth_mqc.tsv",
-        INTERNALDIR / "stats/mqc/sites/motif_ratio_transcript_mqc.tsv",
-        INTERNALDIR / "stats/mqc/sites/motif_ratio_genome_mqc.tsv",
+        expand(
+            INTERNALDIR / "stats/mqc/sites/motif_ratio_{reftype}_mqc.tsv",
+            reftype=SITE_REFTYPES,
+        ),
     output:
         "report_sites/sites.html",
     params:
@@ -1439,7 +1508,7 @@ rule final_report:
         expand(
             rules.generate_motifconv_report.output,
             sample=SAMPLE2DATA.keys(),
-            reftype=["transcript", "genome"],
+            reftype=SITE_REFTYPES,
         ),
         expand(
             rules.generate_motif_enrich_report.output,

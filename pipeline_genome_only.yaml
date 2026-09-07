@@ -1,0 +1,37 @@
+# ============================================================================
+# prismalign pipeline config — genome-only N-color mapping (MK A->G + C->T)
+#
+# A SINGLE genome layer.  Used for organisms with no spliced transcriptome
+# (e.g. bacteria) where the transcript layer is unnecessary.  The Snakefile
+# parses this YAML to derive the active reftypes, so no transcript reference
+# is built/indexed/mapped and site calling uses the genome pileup directly.
+#
+# Run:
+#   prismalign -p pipeline_genome_only.yaml \
+#     -r genome=/path/genome.fa \
+#     -1 R1.fq.gz \
+#     -o genome=/out/genome.bam \
+#     -u /out/unmapped.bam -R /out/summary.tsv
+# ============================================================================
+
+threads: 128
+index_dir: internal_files/ref/map_index
+
+layers:
+  # ---- genome (bwa-mem2, MK; single layer) ----
+  - key: genome
+    role: post
+    site: true
+    engine: bwa-mem2
+    scheme: MK
+    mutation_classes:
+      - name: A_to_G
+        source: A
+        target: G
+      - name: C_to_T
+        source: C
+        target: T
+    filter:
+      min_mapping_ratio: 0.8
+      max_conversion_rates: [1.0, 0.33]
+    em: true

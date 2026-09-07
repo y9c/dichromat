@@ -1,0 +1,30 @@
+# ============================================================================
+# dichromat pipeline config — E. coli GLORI m6A, GENOME-ONLY single layer
+#
+# Uses the genome-only prismalign pipeline (``pipeline_genome_only.yaml``),
+# MK scheme (A->G + C->T), single bwa-mem2 genome layer.  No contamination /
+# genes / transcript layers.
+# ============================================================================
+
+container: "development/dichromat.sif"
+is_etam: false
+batch: "ecoli_genome"
+
+# The Snakefile parses this to derive the active reftypes (here: just genome).
+pipeline: pipeline_genome_only.yaml
+
+base_change: 'A,G'
+secondary_change: 'C,T'
+splice_genome: false
+depth_site: true
+
+reference:
+  genome:
+    fa: /data/project/changye/chye/projects/m6A_new/workspaces/workspace_ecoli_glori_genome/ref/genome.fa
+    gtf: /data/project/changye/chye/projects/m6A_new/workspaces/workspace_ecoli_glori_genome/ref/genome.gtf.gz
+
+samples:
+  Rep1:
+    data:
+      - R1: /data/project/changye/chye/projects/m6A_new/workspaces/workspace_ecoli_glori_genome/Rep1.fastq
+    adapter: "GACGTGTGCTCTTCCGATCTNNNNNNNNXXXXXX-XXXAGATCGGAAGAGCGTCGTGT"
