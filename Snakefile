@@ -239,7 +239,9 @@ rule all:
         "report_reads/unmapped.html",
         "report_sites/sites.html",
         "report_sites/filtered.tsv",
+        "report_sites/filtered.annotated.tsv",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
+        expand(INTERNALDIR / "qc/{sample}.metrics.tsv", sample=SAMPLE2DATA.keys()),
         [
             INTERNALDIR / f"fastq/discarded/{sample}_{rn}_{rd}.fq.gz"
             for sample, v in SAMPLE2DATA.items()
@@ -910,6 +912,44 @@ rule stat_dedup:
         """
 
 
+rule rnaseq_qc:
+    """Run coralsnake qc (rnaseqc-style) on the deduplicated genome BAM.
+
+    Produces per-sample RNA-seq QC metrics + gene/exon count tables from the
+    genome-aligned BAM + GTF.  The default mapping-quality (255) rejects all
+    short-read alignments (MAPQ 16-60), so we lower it to a realistic 20.
+    Single-end libraries use --unpaired (no proper-pair requirement).
+    """
+    input:
+        bam=INTERNALDIR / "bam/{sample}.genome.bam",
+        gtf=REF["genome"]["gtf"],
+    output:
+        metrics=INTERNALDIR / "qc/{sample}.metrics.tsv",
+        genes=INTERNALDIR / "qc/{sample}.gene_reads.tsv",
+        tpm=INTERNALDIR / "qc/{sample}.gene_tpm.tsv",
+        exons=INTERNALDIR / "qc/{sample}.exon_reads.tsv",
+    threads: 8
+    benchmark:
+        BENCHDIR / "rnaseq_qc_{sample}.benchmark.txt"
+    run:
+        # coralsnake qc writes into --outdir; run it there and move outputs.
+        import shutil
+        outdir = INTERNALDIR / "qc"
+        outdir.mkdir(parents=True, exist_ok=True)
+        # PE if any run of the sample is paired-end.
+        is_pe_sample = any(is_pe(sample, rn) for rn in SAMPLE2DATA[sample])
+        unpaired = "" if is_pe_sample else "--unpaired"
+        shell(
+            "{PATH.coralsnake} qc --bam {input.bam} --gtf {input.gtf} "
+            "--outdir {outdir} --sample {sample} {unpaired} "
+            "--mapping-quality 20"
+        )
+        shutil.move(outdir / f"{sample}.metrics.tsv", output.metrics)
+        shutil.move(outdir / f"{sample}.gene_reads.tsv", output.genes)
+        shutil.move(outdir / f"{sample}.gene_tpm.tsv", output.tpm)
+        shutil.move(outdir / f"{sample}.exon_reads.tsv", output.exons)
+
+
 rule liftover_transcript_to_genome:
     input:
         transcripts=INTERNALDIR / "bam/{sample}.transcript.bam" if HAS_TRANSCRIPT else [],
@@ -1265,6 +1305,29 @@ rule filter_sites:
     shell:
         """
         {PATH.filter_sites} -i {input} -o {output.fl}
+        """
+
+
+rule annotate_sites:
+    """Annotate the filtered sites table with gene/transcript/region info.
+
+    Runs coralsnake annotate on report_sites/filtered.tsv (columns 1,2,3 =
+    Chrom,Pos,Strand) against the genome GTF, appending gene_id,
+    transcript_id, transcript_pos, region, gene_pos, etc.  Produces
+    report_sites/filtered.annotated.tsv.
+    """
+    input:
+        sites="report_sites/filtered.tsv",
+        gtf=REF["genome"]["gtf"],
+    output:
+        "report_sites/filtered.annotated.tsv",
+    threads: 8
+    benchmark:
+        BENCHDIR / "annotate_sites.benchmark.txt"
+    shell:
+        """
+        {PATH.coralsnake} annotate -i {input.sites} -o {output} \
+            --reference-gtf {input.gtf} -c 1,2,3 -H -s
         """
 
 
