@@ -3,7 +3,6 @@
 # ============================================================================
 
 container: "development/dichromat.sif"
-is_etam: false
 batch: "ecoli_genome_full"
 
 pipeline: pipeline_genome_only.yaml

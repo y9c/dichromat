@@ -66,7 +66,6 @@ if "reference" in config:
 # ---------------------------------------------------------------------------
 
 BATCH = config.get("batch", "dichromat_run")
-IS_ETAM = config.get("is_etam", "eTAM" in BATCH)
 SKIP_SAMPLES = config.get("skip_samples", [])
 
 
@@ -239,7 +238,7 @@ rule all:
         "report_reads/trimmed.html",
         "report_reads/unmapped.html",
         "report_sites/sites.html",
-        "report_sites/filtered.tsv" if IS_ETAM else "report_sites/sites.tsv.gz",
+        "report_sites/filtered.tsv",
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
         [
             INTERNALDIR / f"fastq/discarded/{sample}_{rn}_{rd}.fq.gz"
@@ -1248,14 +1247,21 @@ rule merge_gene_and_genome_table:
         """
 
 
-rule filter_eTAM_sites:
+rule filter_sites:
+    """Filter the raw sites table with a GC-background statistical model.
+
+    Runs for every pipeline (not just eTAM): fits the per-motif m6A level vs
+    GC background, computes a chi-square p-value per site, and keeps sites
+    with a significant conversion (p < 1).  This is a general m6A site filter
+    (the historical eTAM filter, made the default).
+    """
     input:
         "report_sites/sites.tsv.gz",
     output:
         fl="report_sites/filtered.tsv",
     threads: 64
     benchmark:
-        BENCHDIR / "filter_eTAM_sites.benchmark.txt"
+        BENCHDIR / "filter_sites.benchmark.txt"
     shell:
         """
         {PATH.filter_sites} -i {input} -o {output.fl}
@@ -1513,7 +1519,7 @@ rule final_report:
         expand(
             rules.generate_motif_enrich_report.output,
             sample=SAMPLE2DATA.keys(),
-        ) if IS_ETAM else [],
+        ),
     output:
         "report.html",
     benchmark:

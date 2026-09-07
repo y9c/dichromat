@@ -1,5 +1,6 @@
 # Pipeline Logic
-is_etam: false
+# The GC-background site filter (filter_sites) is always applied and always
+# writes report_sites/filtered.tsv; is_etam no longer gates it.
 skip_samples: []
 
 path:

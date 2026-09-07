@@ -7,7 +7,6 @@
 # ============================================================================
 
 container: "development/dichromat.sif"
-is_etam: false
 batch: "ecoli_genome"
 
 # The Snakefile parses this to derive the active reftypes (here: just genome).

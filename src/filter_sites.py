@@ -111,6 +111,12 @@ def calculate_background_fitting(df_sites, libraries):
             .with_columns(
                 Ratio=(pl.col(f"Uncon_{library}") / pl.col(f"Depth_{library}")).round(2)
             )
+            # Sort before group_by: polars group_by returns groups in a
+            # non-deterministic (hash) order, so the aggregated rows come back
+            # in a different order each run.  Sorting the input makes the group
+            # order deterministic (ties broken by the full key), so the fit
+            # inputs are reproducible.
+            .sort("Motif3", "GC", "Ratio")
             .group_by(["Motif3", "GC", "Ratio"])
             .agg(Count=pl.col("Pos").len())
             .with_columns(
@@ -120,10 +126,23 @@ def calculate_background_fitting(df_sites, libraries):
                 .then(0)
                 .otherwise(pl.col("GC"))
             )
+            # Sort before the second group_by too: the weighted-mean sums
+            # (GC*Count, Ratio*Count) accumulate in the row order polars
+            # presents within each group, which is non-deterministic unless the
+            # input is sorted.  Sorting makes the sum order (and thus the mean
+            # to ~1e-16) reproducible, so curve_fit gets identical inputs.
+            .sort("Motif3", "GC_bin", "GC", "Ratio")
             .group_by("Motif3", "GC_bin")
             .agg(
-                Ratio=pl.col("Ratio").repeat_by(pl.col("Count")).list.explode().mean(),
-                GC=pl.col("GC").repeat_by(pl.col("Count")).list.explode().mean(),
+                # Weighted mean over the repeated (Count-weighted) values.  The
+                # repeat_by/explode/mean path sums floats in a non-deterministic
+                # order (threaded polars), so the Ratio/GC means drifted by ~1e-16
+                # between runs and fed slightly different inputs into curve_fit.
+                # sum(x*Count)/sum(Count) is order-independent and deterministic.
+                Ratio=(pl.col("Ratio") * pl.col("Count")).sum()
+                / pl.col("Count").sum(),
+                GC=(pl.col("GC") * pl.col("Count")).sum()
+                / pl.col("Count").sum(),
                 Count=pl.col("Count").sum(),
             )
             .sort("Motif3", "GC")
