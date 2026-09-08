@@ -342,12 +342,25 @@ def _site_bam(reftype: str, sample: str) -> str:
     """The BAM to call sites on for a site reftype.
 
     The liftover target (SITE_REF_KEY) is site-called on the lifted BAM
-    (transcript reads lifted to genome coords + genome reads).  Any other site
+    (feature reads lifted to its coords + its own reads).  Any other site
     reftype is site-called on its own deduplicated BAM.
     """
     if reftype == SITE_REF_KEY:
         return str(INTERNALDIR / f"liftover_bam/{sample}.bam")
     return str(INTERNALDIR / f"bam/{sample}.{reftype}.bam")
+
+
+def _lifted_refs() -> list:
+    """References with a ``liftover`` target, as ``(key, target)`` pairs.
+
+    Any reference can declare ``liftover: <target>`` (not just transcript);
+    each is lifted to the target's coordinates before site calling.
+    """
+    return [
+        (k, str(r.get("liftover")))
+        for k, r in REF.items()
+        if r.get("liftover") and k in LAYER_KEYS
+    ]
 
 # Build the ``-r key=fa[:index_prefix]`` binding for a layer.  A hisat3n layer
 # Build the ``-r key=fa[:index_prefix]`` binding for a layer.  The prebuilt
@@ -940,20 +953,28 @@ rule rnaseq_qc:
 
 
 rule liftover_bam:
-    """Lift the transcript BAM to genome coords and union with the genome BAM.
+    """Lift every ``liftover`` reference's BAM to its target's coords and
+    union with the target's BAM.
 
-    The transcript BAM (transcript coords) is lifted to genome coordinates via
-    coralsnake liftover, then concatenated with the genome BAM and sorted into
-    a single genome-coordinate BAM (liftover_bam/{sample}.bam).  Site calling
-    then runs on this single lifted BAM (one genome-coordinate pileup), so
-    transcript and genome sites are unified in genome space before counting.
+    Any reference can declare ``liftover: <target>`` (not just transcript):
+    its BAM (in feature coords) is lifted to the target's coordinates via
+    coralsnake liftover, then concatenated with the target's BAM and sorted
+    into a single target-coordinate BAM (liftover_bam/{sample}.bam).  Site
+    calling then runs on this single lifted BAM, so feature and target sites
+    are unified in the target's coordinate space before counting.
     """
     input:
-        transcripts=INTERNALDIR / "bam/{sample}.transcript.bam" if has_layer("transcript") else [],
-        genome=INTERNALDIR / "bam/{sample}.genome.bam",
-        info=INTERNALDIR / "ref/transcript.tsv" if has_layer("transcript") else [],
+        # One BAM + annotation per lifted reference, plus the target's BAM.
+        lifted=lambda wildcards: [
+            INTERNALDIR / f"bam/{wildcards.sample}.{k}.bam"
+            for k, _t in _lifted_refs()
+        ],
+        infos=lambda wildcards: [
+            INTERNALDIR / f"ref/{k}.tsv"
+            for k, _t in _lifted_refs()
+        ],
+        target=INTERNALDIR / f"bam/{{sample}}.{SITE_REF_KEY}.bam",
     output:
-        lifted=temp(TEMPDIR / "liftover/{sample}.transcript.bam") if has_layer("transcript") else [],
         bam=INTERNALDIR / "liftover_bam/{sample}.bam",
         bai=INTERNALDIR / "liftover_bam/{sample}.bam.bai",
     params:
@@ -961,18 +982,40 @@ rule liftover_bam:
     threads: 8
     benchmark:
         BENCHDIR / "liftover_bam_{sample}.benchmark.txt"
-    shell:
-        """
-        if [ -n '{input.transcripts}' ] && [ -s '{input.transcripts}' ]; then
-            {PATH.coralsnake} liftover -t {threads} -i {input.transcripts} -o {output.lifted} -a {input.info} -f {params.fai}
-            {PATH.samtools} cat {output.lifted} {input.genome} | {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam}
-        else
-            # Genome-only run: no transcript layer to liftover; just copy the
-            # genome BAM through (keeps the downstream liftover_bam contract).
-            {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam} {input.genome}
-        fi
-        {PATH.samtools} index -@ {threads} {output.bam}
-        """
+    run:
+        import subprocess, tempfile, os, glob
+        lifted = list(zip(input.lifted, input.infos))
+        if lifted:
+            tmpdir = tempfile.mkdtemp()
+            try:
+                lifted_bams = []
+                for i, (bam, info) in enumerate(lifted):
+                    out = os.path.join(tmpdir, f"lifted_{i}.bam")
+                    subprocess.run(
+                        f"{PATH.coralsnake} liftover -t {threads} -i {bam} "
+                        f"-o {out} -a {info} -f {params.fai}",
+                        shell=True, check=True,
+                    )
+                    lifted_bams.append(out)
+                cat = " ".join(lifted_bams + [input.target])
+                subprocess.run(
+                    f"{PATH.samtools} cat {cat} | "
+                    f"{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam}",
+                    shell=True, check=True,
+                )
+            finally:
+                import shutil
+                shutil.rmtree(tmpdir, ignore_errors=True)
+        else:
+            subprocess.run(
+                f"{PATH.samtools} sort -@ {threads} -m 3G -O BAM "
+                f"-o {output.bam} {input.target}",
+                shell=True, check=True,
+            )
+        subprocess.run(
+            f"{PATH.samtools} index -@ {threads} {output.bam}",
+            shell=True, check=True,
+        )
 
 
 rule count_reads:
