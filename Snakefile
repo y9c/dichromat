@@ -53,14 +53,6 @@ for k, v in user_config.items():
 
 config = merged_config
 
-# Flatten `reference` into top-level config so rules can use `config[<key>]`
-# directly (backward compatibility).
-if "reference" in config:
-    for k, v in config["reference"].items():
-        if k not in config:
-            config[k] = v
-
-
 # ---------------------------------------------------------------------------
 # Batch / sample metadata
 # ---------------------------------------------------------------------------
@@ -118,16 +110,33 @@ def resolve_config_path(p):
 # Global path constants & flags
 # ---------------------------------------------------------------------------
 
-REF = config.get("reference", {})
-# Expand user paths and resolve relative paths in the REF dictionary.
-for ref_type in REF:
-    if isinstance(REF[ref_type], dict):
-        for key, val in REF[ref_type].items():
-            REF[ref_type][key] = resolve_config_path(val)
-    elif isinstance(REF[ref_type], list):
-        REF[ref_type] = [resolve_config_path(f) for f in REF[ref_type]]
-    elif isinstance(REF[ref_type], str):
-        REF[ref_type] = resolve_config_path(REF[ref_type])
+# References.  Two accepted forms:
+#   * list of {key, fa/gtf, ...}  (preferred, prismalign key: style)
+#   * dict keyed by layer name       (legacy, e.g. {genome: {fa: ...}})
+# Both are normalised into REF: {key: {fa, gtf, hisat3n, liftover, ...}}.
+_raw_ref = config.get("reference", {})
+REF = {}
+if isinstance(_raw_ref, list):
+    for entry in _raw_ref:
+        if not isinstance(entry, dict) or "key" not in entry:
+            raise SystemExit("each 'reference' entry needs a 'key'")
+        k = str(entry["key"])
+        REF[k] = {kk: vv for kk, vv in entry.items() if kk != "key"}
+else:
+    # Legacy dict form: {genome: {fa: ...}, contamination: [...]}
+    for k, v in _raw_ref.items():
+        REF[str(k)] = v if isinstance(v, dict) else {"fa": v}
+
+# Expand user paths and resolve relative paths in every reference value.
+def _resolve_ref_value(v):
+    if isinstance(v, dict):
+        return {kk: resolve_config_path(vv) for kk, vv in v.items()}
+    if isinstance(v, list):
+        return [resolve_config_path(x) for x in v]
+    return resolve_config_path(v)
+
+for k in REF:
+    REF[k] = _resolve_ref_value(REF[k])
 
 TEMPDIR = Path(config.get("tempdir", ".tmp"))
 # `path` dict -> SimpleNamespace for dot access (PATH.python, PATH.samtools...).
@@ -247,20 +256,24 @@ SITE_REFTYPES = _site_layers or [
 ]
 
 # Map each layer key to its reference FASTA path.  The reference for a layer is
-# the prepared file in internal_files/ref/ (contamination/genes/transcript) or
-# the external genome FASTA.  This is the single source for ``-r key=path``
-# bindings and for run_countmut's per-reftype reference resolution, so rules do
-# not hand-code ``reftype == 'transcript' -> transcript.fa`` lambdas.
+# the prepared file in internal_files/ref/ (for user FASTA or GTF-derived
+# references) or the external genome FASTA.  This is the single source for
+# ``-r key=path`` bindings and for run_countmut's per-reftype reference
+# resolution.
 def _layer_ref_fa(key: str) -> str:
-    if key == "contamination":
-        return str(INTERNALDIR / "ref/contamination.fa")
-    if key == "genes":
-        return str(INTERNALDIR / "ref/genes.fa")
-    if key == "transcript":
-        return str(INTERNALDIR / "ref/transcript.fa")
-    if key == "genome":
-        return REF["genome"]["fa"]
-    raise KeyError(f"no reference path for layer key {key!r}")
+    ref = REF.get(key)
+    if ref is None:
+        raise KeyError(f"no reference for layer key {key!r}")
+    # A GTF-derived reference is prepared into internal_files/ref/<key>.fa.
+    if ref.get("gtf") or ref.get("liftover"):
+        return str(INTERNALDIR / f"ref/{key}.fa")
+    # User-supplied FASTA (single path or list -> combined into <key>.fa).
+    fa = ref.get("fa")
+    if isinstance(fa, list):
+        return str(INTERNALDIR / f"ref/{key}.fa")
+    if fa:
+        return fa
+    raise KeyError(f"reference {key!r} has no fa or gtf")
 
 REF_BY_LAYER = {k: _layer_ref_fa(k) for k in LAYER_KEYS}
 
@@ -276,17 +289,21 @@ def _bam_suffix(key: str) -> str:
     return _BAM_SUFFIX[key]
 
 # Build the ``-r key=fa[:index_prefix]`` binding for a layer.  A hisat3n layer
-# (contamination, or a spliced genome) is bound as ``fa:index_prefix`` so the
-# prebuilt ``.3n`` index is reused; bwa-mem2 layers are bound by FASTA only.
+# Build the ``-r key=fa[:index_prefix]`` binding for a layer.  The prebuilt
+# index prefix is looked up in the reference under the layer's ENGINE name
+# (e.g. ``hisat3n`` for a hisat-3n layer, ``bwa_mem2`` for bwa-mem2), so any
+# engine can supply a prebuilt index.  If absent, the FASTA is bound alone and
+# prismalign builds the index lazily.
 def _layer_ref_binding(key: str) -> str:
     fa = REF_BY_LAYER[key]
     layer = next((l for l in _pipeline_layers if l.get("key") == key), {})
     engine = str(layer.get("engine", ""))
-    if "hisat3n" in engine:
-        if key == "genome" and REF.get("genome", {}).get("hisat3n"):
-            return f"{fa}:{REF['genome']['hisat3n']}"
-        if key == "contamination":
-            return f"{fa}:{str(INTERNALDIR / 'ref/contamination/index')}"
+    # Normalise engine name to the reference field (hisat3n -> hisat3n,
+    # bwa-mem2 -> bwa_mem2, etc.).
+    idx_field = engine.replace("-", "_")
+    idx = REF.get(key, {}).get(idx_field) or REF.get(key, {}).get("index")
+    if idx:
+        return f"{fa}:{idx}"
     return fa
 
 
@@ -412,75 +429,62 @@ EOF
         """
 
 
-rule combine_contamination_fa:
+# Prepare a reference FASTA for a layer.  Two cases:
+#   * user-supplied FASTA (list) -> combine into internal_files/ref/<key>.fa
+#   * GTF-derived (gtf + liftover) -> coralsnake prepare -> <key>.fa + <key>.tsv
+# The reference's ``liftover`` target (e.g. genome) supplies the genome FASTA
+# used by prepare to extract transcript sequences.
+def _ref_is_gtf(key: str) -> bool:
+    """True if the reference is GTF-derived (declares a liftover target).
+
+    A reference with ``liftover`` is a feature reference (e.g. mrna) built from
+    a GTF; the genome reference has a ``gtf`` for annotation but is NOT
+    GTF-derived (no liftover).
+    """
+    ref = REF.get(key, {})
+    return bool(ref.get("liftover"))
+
+# Prepare a reference FASTA for a layer.  Two cases:
+#   * GTF-derived (gtf + liftover) -> coralsnake prepare from the target's
+#     genome FASTA + the GTF, producing <key>.fa + <key>.tsv.
+#   * user-supplied FASTA (list) -> combine into <key>.fa.
+def _prepare_ref_inputs(key):
+    ref = REF.get(key, {})
+    if _ref_is_gtf(key):
+        # GTF-derived: genome FASTA comes from the liftover target (e.g. genome).
+        target = ref.get("liftover")
+        genome_fa = REF[target]["fa"] if target else None
+        return {"fa": genome_fa or [], "gtf": ref["gtf"]}
+    fa = ref.get("fa")
+    return {"fa": fa or [], "gtf": []}
+
+rule prepare_reference:
     input:
-        REF.get("contamination", []) if "contamination" in REF else [],
+        fa=lambda wildcards: _prepare_ref_inputs(wildcards.key)["fa"],
+        gtf=lambda wildcards: _prepare_ref_inputs(wildcards.key)["gtf"],
     output:
-        fa=INTERNALDIR / "ref/contamination.fa",
-        fai=INTERNALDIR / "ref/contamination.fa.fai",
-    benchmark:
-        BENCHDIR / "combine_contamination_fa.benchmark.txt"
-    shell:
-        """
-        mkdir -p $(dirname {output.fa})
-        cat {input} > {output.fa}
-        {PATH.samtools} faidx {output.fa} --fai-idx {output.fai}
-        """
-
-
-rule build_contamination_hisat3n_index:
-    input:
-        INTERNALDIR / "ref/contamination.fa",
-    output:
-        INTERNALDIR / "ref/contamination/index.indexed",
-    params:
-        basechange=BASE_CHANGE,
-        prefix=str(INTERNALDIR / "ref/contamination/index"),
-    threads: 64
-    benchmark:
-        BENCHDIR / "build_contamination_hisat3n_index.benchmark.txt"
-    shell:
-        """
-        mkdir -p $(dirname {params.prefix})
-        rm -f {params.prefix}*.ht2
-        {PATH.hisat3nbuild} -p {threads} --base-change {params.basechange} {input} {params.prefix}
-        touch {output}
-        """
-
-
-rule combine_genes_fa:
-    input:
-        REF.get("genes", []) if "genes" in REF else [],
-    output:
-        fa=INTERNALDIR / "ref/genes.fa",
-        fai=INTERNALDIR / "ref/genes.fa.fai",
-    benchmark:
-        BENCHDIR / "combine_genes_fa.benchmark.txt"
-    shell:
-        """
-        mkdir -p $(dirname {output.fa})
-        cat {input} > {output.fa}
-        {PATH.samtools} faidx {output.fa} --fai-idx {output.fai}
-        """
-
-
-rule prepared_transcript_ref:
-    input:
-        fa=REF["genome"]["fa"],
-        gtf=REF["genome"]["gtf"],
-    output:
-        info=INTERNALDIR / "ref/transcript.tsv",
-        seq=INTERNALDIR / "ref/transcript.fa",
+        fa=INTERNALDIR / "ref/{key}.fa",
+        fai=INTERNALDIR / "ref/{key}.fa.fai",
+        # <key>.tsv only for GTF-derived references (used by liftover).
+        info=INTERNALDIR / "ref/{key}.tsv",
     threads: 16
     resources:
         mem_mb=64000
     benchmark:
-        BENCHDIR / "prepared_transcript_ref.benchmark.txt"
-    shell:
-        """
-        mkdir -p $(dirname {output.info})
-        {PATH.coralsnake} prepare -g {input.gtf} -f {input.fa} -o {output.info} -s {output.seq} -c -n -x -t -z
-        """
+        BENCHDIR / "prepare_reference_{key}.benchmark.txt"
+    run:
+        import os
+        outdir = os.path.dirname(str(output.fa))
+        os.makedirs(outdir, exist_ok=True)
+        if input.gtf:
+            shell(
+                "{PATH.coralsnake} prepare -g {input.gtf} -f {input.fa} "
+                "-o {output.info} -s {output.fa} -c -n -x -t -z"
+            )
+            shell("{PATH.samtools} faidx {output.fa} --fai-idx {output.fai}")
+        else:
+            shell("cat {input.fa} > {output.fa}")
+            shell("{PATH.samtools} faidx {output.fa} --fai-idx {output.fai}")
 
 
 # ---------------------------------------------------------------------------

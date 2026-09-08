@@ -38,7 +38,7 @@ splice_genome: false
 depth_site: true
 
 reference:
-  genome:
+  - key: genome
     fa: /data/project/changye/chye/projects/m6A_new/workspaces/workspace_ecoli_glori_genome/ref/genome.fa
     gtf: /data/project/changye/chye/projects/m6A_new/workspaces/workspace_ecoli_glori_genome/ref/genome.gtf.gz
 
