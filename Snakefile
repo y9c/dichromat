@@ -269,6 +269,12 @@ _OUT_ATTR = {"contamination": "contam", "genes": "genes", "transcript": "tx", "g
 def _out_attr(key: str) -> str:
     return _OUT_ATTR[key]
 
+# Map a reftype (layer key) to the BAM filename suffix prismalign emits for
+# that layer (used by finalize_map_bam to find the per-layer BAM in TEMPDIR).
+_BAM_SUFFIX = {"contamination": "contam", "genes": "genes", "transcript": "transcript", "genome": "genome"}
+def _bam_suffix(key: str) -> str:
+    return _BAM_SUFFIX[key]
+
 # Build the ``-r key=fa[:index_prefix]`` binding for a layer.  A hisat3n layer
 # (contamination, or a spliced genome) is bound as ``fa:index_prefix`` so the
 # prebuilt ``.3n`` index is reused; bwa-mem2 layers are bound by FASTA only.
@@ -684,151 +690,38 @@ rule map_cascade:
         """
 
 
-rule finalize_premap_summary:
+# Map each active layer's BAM to a per-run file in internal_files/bam/per_run/.
+# The layer key -> output filename mapping is derived from the mapping block
+# (contamination -> contamination, genes -> genes, transcript -> transcript,
+# genome -> genome).  prismalign outputs unsorted BAMs, so we sort here.
+rule finalize_map_bam:
     input:
         lambda wildcards: (
             TEMPDIR
-            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.summary"
+            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.{_bam_suffix(wildcards.reftype)}.bam"
         ),
     output:
-        INTERNALDIR / "stats/premap/{sample}_{rn}.summary",
-    benchmark:
-        BENCHDIR / "finalize_premap_summary_{sample}_{rn}.benchmark.txt"
-    shell:
-        "cp {input} {output}"
-
-
-rule finalize_premap_bam:
-    input:
-        lambda wildcards: (
-            TEMPDIR
-            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.contam.bam"
-        ),
-    output:
-        INTERNALDIR / "bam/per_run/{sample}_{rn}.contamination.bam",
+        INTERNALDIR / "bam/per_run/{sample}_{rn}.{reftype}.bam",
     threads: 64
     priority: 4
     benchmark:
-        BENCHDIR / "finalize_premap_bam_{sample}_{rn}.benchmark.txt"
+        BENCHDIR / "finalize_map_bam_{sample}_{rn}_{reftype}.benchmark.txt"
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
-# ---------------------------------------------------------------------------
-# 3b. Main map: genes + transcript (simultaneously if genes provided,
-#     otherwise just transcript)
-# ---------------------------------------------------------------------------
-
-
-rule index_transcript:
-    input:
-        rf=INTERNALDIR / "ref/transcript.fa",
-    output:
-        idx=INTERNALDIR / "ref/transcript/index.indexed",
-    threads: 64
-    benchmark:
-        BENCHDIR / "index_transcript.benchmark.txt"
-    shell:
-        """
-        mkdir -p {INTERNALDIR}/ref/map_index
-        mkdir -p $(dirname {output.idx})
-        {PATH.prismalign} map -s MK --adapter bwa-mem2 --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -1 {input.rf} -t {threads}
-        touch {output.idx}
-        """
-
-
-rule index_genes:
-    input:
-        rf=INTERNALDIR / "ref/genes.fa",
-    output:
-        idx=INTERNALDIR / "ref/genes/index.indexed",
-    threads: 64
-    benchmark:
-        BENCHDIR / "index_genes.benchmark.txt"
-    shell:
-        """
-        mkdir -p {INTERNALDIR}/ref/map_index
-        mkdir -p $(dirname {output.idx})
-        {PATH.prismalign} map -s MK --adapter bwa-mem2 --index-only --index-dir {INTERNALDIR}/ref/map_index -r {input.rf} -1 {input.rf} -t {threads}
-        touch {output.idx}
-        """
-
-
-rule finalize_mainmap_summary:
+rule finalize_map_summary:
     input:
         lambda wildcards: (
             TEMPDIR
             / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.summary"
         ),
     output:
-        INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
+        INTERNALDIR / "stats/map/{sample}_{rn}.summary",
     benchmark:
-        BENCHDIR / "finalize_mainmap_summary_{sample}_{rn}.benchmark.txt"
+        BENCHDIR / "finalize_map_summary_{sample}_{rn}.benchmark.txt"
     shell:
         "cp {input} {output}"
-
-
-rule finalize_mainmap_genes_bam:
-    input:
-        lambda wildcards: (
-            TEMPDIR
-            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genes.bam"
-            if has_layer("genes")
-            else []
-        ),
-    output:
-        INTERNALDIR / "bam/per_run/{sample}_{rn}.genes.bam",
-    threads: 64
-    benchmark:
-        BENCHDIR / "finalize_mainmap_genes_bam_{sample}_{rn}.benchmark.txt"
-    shell:
-        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
-
-
-rule finalize_mainmap_transcript_bam:
-    input:
-        lambda wildcards: (
-            TEMPDIR
-            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.transcript.bam"
-            if has_layer("transcript")
-            else []
-        ),
-    output:
-        INTERNALDIR / "bam/per_run/{sample}_{rn}.transcript.bam",
-    threads: 64
-    benchmark:
-        BENCHDIR / "finalize_mainmap_transcript_bam_{sample}_{rn}.benchmark.txt"
-    shell:
-        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
-
-
-rule finalize_remap_summary:
-    input:
-        lambda wildcards: (
-            TEMPDIR
-            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.summary"
-        ),
-    output:
-        INTERNALDIR / "stats/remap/{sample}_{rn}.summary",
-    benchmark:
-        BENCHDIR / "finalize_remap_summary_{sample}_{rn}.benchmark.txt"
-    shell:
-        "cp {input} {output}"
-
-
-rule finalize_genome_bam:
-    input:
-        lambda wildcards: (
-            TEMPDIR
-            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genome.bam"
-        ),
-    output:
-        INTERNALDIR / "bam/per_run/{sample}_{rn}.genome.bam",
-    threads: 64
-    benchmark:
-        BENCHDIR / "finalize_genome_bam_{sample}_{rn}.benchmark.txt"
-    shell:
-        "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
 
 
 rule finalize_unmapped_fq:
@@ -1113,34 +1006,6 @@ rule count_reads:
         """
 
 
-rule insert_size:
-    input:
-        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
-    output:
-        tsv=INTERNALDIR / "stats/rlen/{sample}.{reftype}.isize.tsv",
-    threads: 8
-    benchmark:
-        BENCHDIR / "insert_size_{sample}_{reftype}.benchmark.txt"
-    shell:
-        """
-        {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^IS|cut -f 2- > {output}
-        """
-
-
-rule read_length:
-    input:
-        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
-    output:
-        tsv=INTERNALDIR / "stats/rlen/{sample}.{reftype}.rlen.tsv",
-    threads: 8
-    benchmark:
-        BENCHDIR / "read_length_{sample}_{reftype}.benchmark.txt"
-    shell:
-        """
-        {PATH.samtools} stats -@ {threads} -i 1000 {input} |grep ^RL | cut -f 2- > {output}
-        """
-
-
 # ---------------------------------------------------------------------------
 # Phase 5: Site calling & table merge/remap
 # ---------------------------------------------------------------------------
@@ -1255,27 +1120,6 @@ rule pileup_base:
         BENCHDIR / "pileup_base_{sample}_{reftype}.benchmark.txt"
     shell:
         "{PATH.bgzip} -@ {threads} -c {input} > {output}"
-
-
-rule unfilter_genes_stat:
-    """Per-reference summary of the 8-column pileup (chrom pos strand motif
-    u0 u1 m0 m1): unconverted = u1 (group 1 = the legacy gated set),
-    depth = u1+m1, ratio = u1/(u1+m1) -- byte-for-byte the pre-router
-    numbers (group 0 is not used here; motif_conversion_rate_stat reports it
-    in the *_all columns).  NOTE: the legacy awk keyed `u` on $6 (the u1
-    value) while d/r/n were keyed on $1, so the END block divided by zero on
-    any non-empty input (fatal in gawk/mawk); `u[$1]` is the evident intent
-    (per-reference summary) and is what this rule now does."""
-    input:
-        INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
-    output:
-        INTERNALDIR / "stats/{sample}.{reftype}.genes.tsv",
-    benchmark:
-        BENCHDIR / "unfilter_genes_stat_{sample}_{reftype}.benchmark.txt"
-    shell:
-        """
-        zcat {input} | awk -F '\\t' 'NR>1 && $1!~"^probe_" && ($6+$8+0)>0{{u[$1]+=$6; d[$1]+=$6+$8; r[$1]+=$6/($6+$8); n[$1]+=1}}END{{ for(x in u){{print x,n[x],u[x],d[x],r[x]/n[x]}} }}' > {output}
-        """
 
 
 rule motif_conversion_rate_stat:
@@ -1493,20 +1337,10 @@ rule generate_mapping_report:
     input:
         INTERNALDIR / "stats/mqc/reads/mapping_stats_mqc.tsv",
         INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
+        # map_cascade produces ONE summary with all layer stats; the old
+        # premap/mainmap/remap split is gone.
         expand(
-            INTERNALDIR / "stats/premap/{sample}_{rn}.summary",
-            sample=SAMPLE2DATA.keys(),
-            rn=["run1"],
-        )
-        if has_layer("contamination")
-        else [],
-        expand(
-            INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
-            sample=SAMPLE2DATA.keys(),
-            rn=["run1"],
-        ),
-        expand(
-            INTERNALDIR / "stats/remap/{sample}_{rn}.summary",
+            INTERNALDIR / "stats/map/{sample}_{rn}.summary",
             sample=SAMPLE2DATA.keys(),
             rn=["run1"],
         ),
@@ -1638,14 +1472,36 @@ rule generate_motif_enrich_report:
         "{PATH.report_html} motiffig {output.html} {input.tsv} {wildcards.sample}"
 
 
+rule generate_rnaseq_report:
+    """Render the coralsnake rnaseq_qc metrics into a per-sample QC table.
+
+    Reads internal_files/qc/rnaseq/{sample}.metrics.tsv (read length, fragment
+    sizes, mapping/exonic rates, etc.) and pivots them into one table for the
+    final report.
+    """
+    input:
+        expand(
+            INTERNALDIR / "qc/rnaseq/{sample}.metrics.tsv",
+            sample=SAMPLE2DATA.keys(),
+        ),
+    output:
+        INTERNALDIR / "stats/report/rnaseq.html",
+    benchmark:
+        BENCHDIR / "generate_rnaseq_report.benchmark.txt"
+    shell:
+        "{PATH.report_html} rnaseq {output} {input}"
+
+
 rule final_report:
     """Assemble one self-contained report.html from all per-section HTML."""
     input:
-        "report_reads/trimmed.html",
-        "report_reads/unmapped.html",
-        "report_reads/mapping.html",
-        "report_sites/sites.html",
+        # All report sections, referenced uniformly via ``rules.<rule>.output``.
+        rules.report_qc_trimmed.output,
+        rules.unmapped_report.output,
+        rules.generate_mapping_report.output,
+        rules.generate_site_report.output,
         rules.generate_sites_extra_report.output,
+        rules.generate_rnaseq_report.output,
         expand(
             rules.generate_motifconv_report.output,
             sample=SAMPLE2DATA.keys(),

@@ -430,6 +430,41 @@ def cmd_qc(out, files):
     print(f"[report_html] wrote {out} ({len(files)} samples)")
 
 
+def cmd_rnaseq(out, files):
+    """Render coralsnake rnaseq_qc metrics.tsv files as a per-sample table.
+
+    Each metrics.tsv is a two-column key/value table (Sample, Metric, Value).
+    We pivot to one row per metric with a column per sample, so the final
+    report shows all QC metrics side by side.
+    """
+    import csv
+    from collections import OrderedDict
+
+    # metric name -> {sample: value}
+    metrics = OrderedDict()
+    sample_names = []
+    for f in files:
+        p = Path(f)
+        sample = p.stem  # e.g. Rep1.metrics -> Rep1
+        sample_names.append(sample)
+        with open(p, newline="", errors="replace") as fh:
+            for row in csv.reader(fh, delimiter="\t"):
+                if len(row) < 2:
+                    continue
+                key = row[0].strip()
+                val = row[1].strip()
+                if key == "Sample":
+                    continue
+                metrics.setdefault(key, {})[sample] = val
+
+    header = ["Metric"] + sample_names
+    rows = [[k] + [v.get(s, "") for s in sample_names] for k, v in metrics.items()]
+    body = table_html(header, rows, sortable=False)
+    nav = "".join(f'<a href="#rnaseq">RNA-seq QC</a>')
+    Path(out).write_text(page(Path(out).stem, "", nav, body))
+    print(f"[report_html] wrote {out} ({len(sample_names)} samples, {len(metrics)} metrics)")
+
+
 def cmd_tables(out, files):
     parts = []
     for f in files:
@@ -905,6 +940,8 @@ def main():
             cmd_qc(out, rest)
         elif mode == "tables":
             cmd_tables(out, rest)
+        elif mode == "rnaseq":
+            cmd_rnaseq(out, rest)
         elif mode == "assemble":
             cmd_assemble(out, rest)
         elif mode == "metagene":
