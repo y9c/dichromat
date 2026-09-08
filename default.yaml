@@ -14,6 +14,7 @@ path:
   markdup: "markdup"
   variant: "variant"
   report_html: "/opt/app_venv/bin/python /pipeline/src/report_html.py"
+  report_sites: "/opt/app_venv/bin/python /pipeline/src/report_sites.py"
   coralsnake: "coralsnake"
   prismalign: "prismalign"
   countmut: "countmut"

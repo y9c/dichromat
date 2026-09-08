@@ -1394,50 +1394,20 @@ rule report_sites:
     threads: 8
     benchmark:
         BENCHDIR / "report_sites.benchmark.txt"
-    run:
-        import os, tempfile, subprocess, shutil
-        tmpdir = tempfile.mkdtemp(prefix="report_sites_")
-        try:
-            def run(cmd):
-                subprocess.run(cmd, shell=True, check=True)
-
-            # 1. site table
-            table_html = os.path.join(tmpdir, "table.html")
-            run(f"{PATH.report_html} tables {table_html} "
-                + " ".join(str(p) for p in input.mqc)
-                + " " + " ".join(str(p) for p in input.motif_ratio))
-            # 2. metagene (compute + render)
-            prof = os.path.join(tmpdir, "metagene.tsv")
-            run(f"{PATH.coralsnake} metagene -i {input.sites} -g {input.gtf} -H "
-                f"--meta-columns 1,2,3 --bins 100 --export-profile {prof}")
-            meta_html = os.path.join(tmpdir, "metagene.html")
-            run(f"{PATH.report_html} metagene {meta_html} {prof}")
-            # 3. logo (compute + render)
-            logo_html = os.path.join(tmpdir, "logo.html")
-            run(f"zcat {input.sites} | awk -F '\\t' 'NR==1{{for(i=7;i<=NF;i++) if($$i ~ /^Depth_/) d[i]=1; next}} "
-                f"{{s=0; for(i in d) s+=$$i; if($$6 ~ /^[ACGTUNn]+$/ && s>0) print $$6 \"\\t\" s}}' "
-                f"| {PATH.coralsnake} logo -i - --matrix {logo_html}")
-            # 4. per-sample motif conversion + enrichment
-            sections = [table_html, meta_html, logo_html]
-            by_motif = [str(p) for p in input.by_motif]
-            by_motif_genome = [str(p) for p in input.by_motif_genome]
-            for si, sample in enumerate(SAMPLE2DATA):
-                for reftype in SITE_REFTYPES:
-                    motif_html = os.path.join(tmpdir, f"motif_{sample}_{reftype}.html")
-                    run(f"{PATH.report_html} motifconv {motif_html} "
-                        + " ".join(by_motif))
-                    sections.append(motif_html)
-                enrich_tsv = os.path.join(tmpdir, f"enrich_{sample}.tsv")
-                run(f"{PATH.motif_enrich} -i {by_motif_genome[si]} -f {input.filtered} "
-                    f"-s {sample} -o {enrich_tsv}")
-                enrich_html = os.path.join(tmpdir, f"enrich_{sample}.html")
-                run(f"{PATH.report_html} motiffig {enrich_html} {enrich_tsv} {sample}")
-                sections.append(enrich_html)
-            # 5. assemble
-            os.makedirs(os.path.dirname(str(output)), exist_ok=True)
-            run(f"{PATH.report_html} assemble {output} " + " ".join(sections))
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+    params:
+        samples=" ".join(SAMPLE2DATA.keys()),
+        reftypes=" ".join(SITE_REFTYPES),
+    shell:
+        """
+        {PATH.report_sites} {output} \
+            --mqc {input.mqc} \
+            --motif-ratio {input.motif_ratio} \
+            --sites {input.sites} --gtf {input.gtf} \
+            --by-motif {input.by_motif} \
+            --by-motif-genome {input.by_motif_genome} \
+            --filtered {input.filtered} \
+            --samples {params.samples} --reftypes {params.reftypes}
+        """
 
 
 rule report_rnaseq:
