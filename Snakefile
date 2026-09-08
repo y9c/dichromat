@@ -403,6 +403,7 @@ def is_unstranded(sample):
 
 rule all:
     input:
+        "report.html",
         "report_reads/mapping.html",
         "report_reads/trimmed.html",
         "report_reads/unmapped.html",
