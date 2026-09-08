@@ -125,9 +125,21 @@ else:
         REF[str(k)] = v if isinstance(v, dict) else {"fa": v}
 
 # Expand user paths and resolve relative paths in every reference value.
+# Path-valued reference fields that get ~/relative expansion.  Non-path
+# fields (e.g. ``liftover: genome``) must be left untouched.
+_REF_PATH_FIELDS = {"fa", "gtf", "hisat3n", "bwa_mem2", "index"}
+
+
 def _resolve_ref_value(v):
     if isinstance(v, dict):
-        return {kk: resolve_config_path(vv) for kk, vv in v.items()}
+        return {
+            kk: (
+                [resolve_config_path(x) for x in vv]
+                if kk in _REF_PATH_FIELDS and isinstance(vv, list)
+                else (resolve_config_path(vv) if kk in _REF_PATH_FIELDS else vv)
+            )
+            for kk, vv in v.items()
+        }
     if isinstance(v, list):
         return [resolve_config_path(x) for x in v]
     return resolve_config_path(v)
@@ -505,6 +517,9 @@ rule prepare_reference:
         else:
             shell("cat {input.fa} > {output.fa}")
             shell("{PATH.samtools} faidx {output.fa} --fai-idx {output.fai}")
+            # Non-GTF-derived references have no liftover annotation; write an
+            # empty <key>.tsv so downstream consumers can rely on it existing.
+            shell(": > {output.info}")
 
 
 # ---------------------------------------------------------------------------
@@ -1158,8 +1173,13 @@ rule merge_sites:
         runtime=720
     params:
         # No transcript layer -> omit -t/-a; remap_genome passes the genome
-        # pileup straight through (empty gene annotation).
-        tx_args="" if not has_layer("transcript") else "-t {input.info} -a {input.transcripts}",
+        # pileup straight through (empty gene annotation).  Use a lambda so
+        # Snakemake does not try to expand {input.*} as wildcards.
+        tx_args=lambda wildcards, input: (
+            ""
+            if not has_layer("transcript")
+            else f"-t {input.info} -a {input.transcripts}"
+        ),
     shell:
         """
         {PATH.remap_genome} {params.tx_args} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}

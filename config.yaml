@@ -1,32 +1,92 @@
-container: "development/dichromat.sif"
+# ============================================================================
+# dichromat pipeline config — Homo sapiens m6A (GLORI), multi-layer
+#
+# Mirrors the classic dichromat mapping cascade (see the reference Snakefile):
+#   premap  (contamination, hisat3n) -> mainmap (genes + transcript, bwa-mem2)
+#   -> remap (genome rescue, hisat3n, spliced).
+# The Snakefile derives the active layers from this ``mapping:`` block and
+# generates the prismalign pipeline YAML that prismalign consumes.
+# ============================================================================
 
-# Mapping layers (the Snakefile generates the prismalign pipeline YAML from
-# this block).  This example uses a single genome layer; add contamination /
-# genes / transcript layers as needed.
+container: "development/dichromat.sif"
+batch: "human_m6a"
+
+# Mapping layers (order = priority).  Each ``key`` auto-associates with the
+# matching ``reference:`` entry below.
 mapping:
   threads: 128
   index_dir: internal_files/ref/map_index
   layers:
+    # ---- premap: contamination removal (hisat3n, self-converting) ----
+    - key: contamination
+      role: pre
+      engine: hisat3n
+      scheme: PLAIN              # hisat3n self-converts A->G; engine feeds original reads
+      engine_kwargs:
+        no_splice: true
+        extra_args: "--np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-2,-0.8"
+      filter:
+        pre_gate: {}             # contamination gate (min_softclip=30, xm_factor=15)
+
+    # ---- mainmap: genes (bwa-mem2, MK; masking layer, claims first) ----
+    - key: genes
+      role: main
+      engine: bwa-mem2
+      scheme: MK
+      ref_strand: fwd
+      filter:
+        min_mapping_ratio: 0.8
+        max_conversion_rates: [1.0, 0.33]
+      em: true
+
+    # ---- mainmap: transcript (bwa-mem2, MK) ----
+    - key: transcript
+      role: main
+      site: true
+      engine: bwa-mem2
+      scheme: MK
+      ref_strand: fwd
+      filter:
+        min_mapping_ratio: 0.8
+        max_conversion_rates: [1.0, 0.33]
+
+    # ---- remap: genome rescue (hisat3n, spliced) ----
     - key: genome
       role: post
       site: true
       engine: hisat3n
       scheme: PLAIN
-      mutation_classes:
-        - name: A_to_G
-          source: A
-          target: G
-        - name: C_to_T
-          source: C
-          target: T
+      splice: true
+      engine_kwargs:
+        extra_args: "--avoid-pseudogene --np 0 --rdg 5,3 --rfg 5,3 --sp 9,3 --mp 3,1 --score-min L,-3,-0.5"
       filter:
         max_nm_ratio: 0.08
       em: true
 
+# References.  Each entry's ``key`` maps to a mapping layer.  A ``liftover``
+# target marks a GTF-derived feature reference (transcript) that is built from
+# the target's genome FASTA + the GTF and lifted to genome coordinates after
+# mapping.  The ``hisat3n``/``bwa_mem2`` fields supply a prebuilt index prefix
+# (optional; prismalign builds lazily if absent).
 reference:
+  - key: contamination
+    fa:
+      - ~/reference/contamination/contamination.fa
+      - /data/project/changye/chye/projects/m6A_new/ref/PET28a-tadA.fa
+
+  - key: genes
+    fa:
+      - ~/rawdata_public/GLORI_v3/ref.fa
+      - ~/reference/genes/Homo_sapiens.rRNA_tRNA_sncRNA.fa
+
+  - key: transcript
+    gtf: ~/reference/genome/Homo_sapiens/GRCh38.release110.gtf
+    liftover: genome
+
   - key: genome
     fa: ~/reference/genome/Homo_sapiens/GRCh38.fa
     gtf: ~/reference/genome/Homo_sapiens/GRCh38.release110.gtf
+    hisat3n: ~/reference/genome/Homo_sapiens/hisat2_tx_3n/GRCh38.release110.3n
 
 samples:
   sample1:
