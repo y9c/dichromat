@@ -597,8 +597,6 @@ rule trim_reads:
         pe=lambda wildcards: is_pe(wildcards.sample, wildcards.rn),
         # Shell prefix for PE-only copy/gzip steps (empty for PE, '#' comment for SE).
         pe_cp=lambda wildcards: "" if is_pe(wildcards.sample, wildcards.rn) else "#",
-        # Shell prefix for SE-only empty-R2 touch (empty for SE, '#' for PE).
-        se_touch=lambda wildcards: "" if not is_pe(wildcards.sample, wildcards.rn) else "#",
         # cutseq args: SE trims R1 only; PE trims R1 + R2.
         cutseq_args=lambda wildcards, output, input: (
             f"-o {output.c1} {output.c2} -d {output.s1} {output.s2} "
@@ -626,8 +624,9 @@ rule trim_reads:
                 {params.cutseq_args}
         fi
         # SE runs declare c2/s2 outputs but cutseq only writes R1; create empty
-        # R2 files so Snakemake sees all declared outputs produced.
-        {params.se_touch} mkdir -p $(dirname {output.c2}) $(dirname {output.s2}) &&         {params.se_touch} touch {output.c2} {output.s2}
+        # R2 files so Snakemake sees all declared outputs produced.  For PE the
+        # files already exist (touch is a no-op).
+        mkdir -p $(dirname {output.c2}) $(dirname {output.s2}) && touch {output.c2} {output.s2}
         """
 
 
