@@ -267,25 +267,31 @@ ACTIVE_LAYERS = set(LAYER_KEYS)
 
 def has_layer(key: str) -> bool:
     return key in ACTIVE_LAYERS
-HAS_GENOME = "genome" in LAYER_KEYS
-# The genome layer's engine decides how its reference is bound: a spliced
-# hisat3n genome layer uses a prebuilt ``.3n`` index prefix, while a plain
-# bwa-mem2 genome layer (e.g. genome-only bacteria) is bound by FASTA only.
-_GENOME_LAYER = next((l for l in _pipeline_layers if l.get("key") == "genome"), {})
-GENOME_ENGINE = str(_GENOME_LAYER.get("engine", ""))
+# The reference key used for site calling.  Site calling runs on the single
+# genome-coordinate BAM (liftover_bam), so there is exactly one site reftype:
+# the key of the reference that GTF-derived feature references lift to (via
+# ``liftover: <key>``).  If none, fall back to the conventional ``genome`` key.
+_liftover_targets = {
+    str(r.get("liftover"))
+    for r in REF.values()
+    if r.get("liftover")
+}
+SITE_REF_KEY = next(iter(_liftover_targets), "genome")
+HAS_GENOME = SITE_REF_KEY in LAYER_KEYS
+# The site reference layer's engine decides how its reference is bound: a
+# spliced hisat3n layer uses a prebuilt ``.3n`` index prefix, while a plain
+# bwa-mem2 layer (e.g. genome-only bacteria) is bound by FASTA only.
+_SITE_REF_LAYER = next((l for l in _pipeline_layers if l.get("key") == SITE_REF_KEY), {})
+GENOME_ENGINE = str(_SITE_REF_LAYER.get("engine", ""))
 GENOME_HAS_HISAT3N = "hisat3n" in GENOME_ENGINE
 
 # Active reftypes in pipeline-layer order (contamination/genes are the
 # optional pre/main masks; transcript+genome the main mapping layers).
 REFTYPES = LAYER_KEYS
 
-# Site-calling reftypes: the layers that produce sites (declared with
-# ``site: true`` in the pipeline YAML).  Defaults to the main mapping layers
-# (transcript + genome) when no layer declares ``site``.
-_site_layers = [str(l.get("key")) for l in _pipeline_layers if l.get("site")]
-SITE_REFTYPES = _site_layers or [
-    r for r in LAYER_KEYS if r in ("transcript", "genome")
-]
+# Site-calling reftypes.  Site calling runs on the single genome-coordinate
+# BAM (liftover_bam), so there is exactly one site reftype: the site ref key.
+SITE_REFTYPES = [SITE_REF_KEY]
 
 # Map each layer key to its reference FASTA path.  The reference for a layer is
 # the prepared file in internal_files/ref/ (for user FASTA or GTF-derived
@@ -882,7 +888,7 @@ rule rnaseq_qc:
     """
     input:
         bam=INTERNALDIR / "bam/{sample}.genome.bam",
-        gtf=REF["genome"]["gtf"],
+        gtf=REF[SITE_REF_KEY]["gtf"],
     output:
         metrics=INTERNALDIR / "qc/rnaseq/{sample}.metrics.tsv",
         genes=INTERNALDIR / "qc/rnaseq/{sample}.gene_reads.tsv",
@@ -908,6 +914,42 @@ rule rnaseq_qc:
         shutil.move(outdir / f"{sample}.gene_reads.tsv", output.genes)
         shutil.move(outdir / f"{sample}.gene_tpm.tsv", output.tpm)
         shutil.move(outdir / f"{sample}.exon_reads.tsv", output.exons)
+
+
+rule liftover_bam:
+    """Lift the transcript BAM to genome coords and union with the genome BAM.
+
+    The transcript BAM (transcript coords) is lifted to genome coordinates via
+    coralsnake liftover, then concatenated with the genome BAM and sorted into
+    a single genome-coordinate BAM (liftover_bam/{sample}.bam).  Site calling
+    then runs on this single lifted BAM (one genome-coordinate pileup), so
+    transcript and genome sites are unified in genome space before counting.
+    """
+    input:
+        transcripts=INTERNALDIR / "bam/{sample}.transcript.bam" if has_layer("transcript") else [],
+        genome=INTERNALDIR / "bam/{sample}.genome.bam",
+        info=INTERNALDIR / "ref/transcript.tsv" if has_layer("transcript") else [],
+    output:
+        lifted=temp(TEMPDIR / "liftover/{sample}.transcript.bam") if has_layer("transcript") else [],
+        bam=INTERNALDIR / "liftover_bam/{sample}.bam",
+        bai=INTERNALDIR / "liftover_bam/{sample}.bam.bai",
+    params:
+        fai=REF[SITE_REF_KEY]["fa"] + ".fai",
+    threads: 8
+    benchmark:
+        BENCHDIR / "liftover_bam_{sample}.benchmark.txt"
+    shell:
+        """
+        if [ -n '{input.transcripts}' ] && [ -s '{input.transcripts}' ]; then
+            {PATH.coralsnake} liftover -t {threads} -i {input.transcripts} -o {output.lifted} -a {input.info} -f {params.fai}
+            {PATH.samtools} cat {output.lifted} {input.genome} | {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam}
+        else
+            # Genome-only run: no transcript layer to liftover; just copy the
+            # genome BAM through (keeps the downstream liftover_bam contract).
+            {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam} {input.genome}
+        fi
+        {PATH.samtools} index -@ {threads} {output.bam}
+        """
 
 
 rule count_reads:
@@ -1026,11 +1068,14 @@ rule run_countmut:
     motif_rate.
     """
     input:
-        bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
-        bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
-        ref=lambda wildcards: REF_BY_LAYER[wildcards.reftype],
+        # Site calling runs on the single genome-coordinate BAM produced by
+        # liftover_bam (transcript reads lifted to genome coords + genome
+        # reads), so there is one genome-coordinate pileup per sample.
+        bam=INTERNALDIR / "liftover_bam/{sample}.bam",
+        bai=INTERNALDIR / "liftover_bam/{sample}.bam.bai",
+        ref=lambda wildcards: REF_BY_LAYER[SITE_REF_KEY],
     output:
-        INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
+        INTERNALDIR / f"pileup/per_sample/{{sample}}.{SITE_REF_KEY}.tsv.gz",
     params:
         # 2-group router (countmut >= 0.2.2): group 1 = high-conversion bases
         # (legacy 0.0.8 gate), group 0 = all other kept bases; NS > max_sub
@@ -1069,7 +1114,7 @@ rule run_countmut:
         ),
     threads: 64
     benchmark:
-        BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
+        BENCHDIR / "run_countmut_{sample}.benchmark.txt"
     shell:
         "{PATH.countmut} -i {input.bam} -r {input.ref} -o - -t {threads} -e \"{params.router}\" -p \"{params.site_filter}\" --motif-pad 15 --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\" | {PATH.bgzip} -@ {threads} -c > {output}"
 
@@ -1083,13 +1128,13 @@ rule motif_rate:
     report the same per-motif stats over ALL kept groups (u0+u1 unconverted,
     u0+u1+m0+m1 depth)."""
     input:
-        pileup=INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
+        pileup=INTERNALDIR / f"pileup/per_sample/{{sample}}.{SITE_REF_KEY}.tsv.gz",
     output:
-        INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
+        INTERNALDIR / f"stats/ratio/by_motif/{{sample}}.{SITE_REF_KEY}.tsv",
     params:
         target_base=BASE_CHANGE.split(",")[0].upper(),
     benchmark:
-        BENCHDIR / "motif_rate_{sample}_{reftype}.benchmark.txt"
+        BENCHDIR / "motif_rate_{sample}.benchmark.txt"
     shell:
         "zcat {input.pileup} | awk -F '\\t' -v target=\"{params.target_base}\" "
         '\'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio","Count_all","Unconverted_all","Depth_all","Ratio_all"}} '
@@ -1104,11 +1149,11 @@ rule motif_rate:
 rule join_pileup:
     input:
         expand(
-            INTERNALDIR / "pileup/per_sample/{sample}.{{reftype}}.tsv.gz",
+            INTERNALDIR / f"pileup/per_sample/{{sample}}.{SITE_REF_KEY}.tsv.gz",
             sample=SAMPLE2DATA.keys(),
         ),
     output:
-        INTERNALDIR / "pileup/{reftype}.parquet",
+        INTERNALDIR / f"pileup/{SITE_REF_KEY}.parquet",
     params:
         samples=" ".join(SAMPLE2DATA.keys()),
         requires=" ".join(
@@ -1116,7 +1161,7 @@ rule join_pileup:
         ),
     threads: lambda wildcards, input: min(int(len(input) * 4), 32)
     benchmark:
-        BENCHDIR / "join_pileup_{reftype}.benchmark.txt"
+        BENCHDIR / "join_pileup.benchmark.txt"
     shell:
         """
         {PATH.merge_samples} --files {input} --names {params.samples} --output {output} --requires {params.requires}
@@ -1124,20 +1169,15 @@ rule join_pileup:
 
 
 rule merge_sites:
-    """Merge the site-calling pileups into the final sites table.
+    """Write the final sites table from the genome-coordinate pileup.
 
-    With a transcript layer present, remap_genome lifts transcript sites to
-    genome coords (strand-aware) and unions with genome sites.  For a
-    genome-only run there is no transcript layer: the genome pileup is passed
-    straight through (empty gene annotation), so the sites table keeps the
-    same Chrom/Pos/Strand/GeneName/GenePos/Motif schema.
+    Site calling runs on the single genome-coordinate BAM (liftover_bam), so
+    transcript and genome sites are already unified in genome space before
+    counting.  This rule just converts the merged genome pileup
+    (pileup/genome.parquet) to the report_sites/sites.tsv.gz table.
     """
     input:
-        info=INTERNALDIR / "ref/transcript.tsv" if has_layer("transcript") else [],
-        transcripts=(
-            INTERNALDIR / "pileup/transcript.parquet" if has_layer("transcript") else []
-        ),
-        genome=INTERNALDIR / "pileup/genome.parquet",
+        genome=INTERNALDIR / f"pileup/{SITE_REF_KEY}.parquet",
     output:
         "report_sites/sites.tsv.gz",
     threads: 32
@@ -1145,18 +1185,9 @@ rule merge_sites:
         BENCHDIR / "merge_sites.benchmark.txt"
     resources:
         runtime=720
-    params:
-        # No transcript layer -> omit -t/-a; remap_genome passes the genome
-        # pileup straight through (empty gene annotation).  Use a lambda so
-        # Snakemake does not try to expand {input.*} as wildcards.
-        tx_args=lambda wildcards, input: (
-            ""
-            if not has_layer("transcript")
-            else f"-t {input.info} -a {input.transcripts}"
-        ),
     shell:
         """
-        {PATH.remap_genome} {params.tx_args} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
+        {PATH.remap_genome} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
         """
 
 
@@ -1191,7 +1222,7 @@ rule annotate_sites:
     """
     input:
         sites="report_sites/filtered.tsv",
-        gtf=REF["genome"]["gtf"],
+        gtf=REF[SITE_REF_KEY]["gtf"],
     output:
         "report_sites/filtered.annotated.tsv",
     threads: 8
@@ -1333,15 +1364,10 @@ rule report_sites:
         ),
         # site context (metagene + logo)
         sites="report_sites/sites.tsv.gz",
-        gtf=REF["genome"]["gtf"],
+        gtf=REF[SITE_REF_KEY]["gtf"],
         # per-sample motif conversion + enrichment
         by_motif=expand(
-            INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
-            sample=SAMPLE2DATA.keys(),
-            reftype=SITE_REFTYPES,
-        ),
-        by_motif_genome=expand(
-            INTERNALDIR / "stats/ratio/by_motif/{sample}.genome.tsv",
+            INTERNALDIR / f"stats/ratio/by_motif/{{sample}}.{SITE_REF_KEY}.tsv",
             sample=SAMPLE2DATA.keys(),
         ),
         filtered="report_sites/filtered.tsv",
@@ -1360,7 +1386,6 @@ rule report_sites:
             --motif-ratio {input.motif_ratio} \
             --sites {input.sites} --gtf {input.gtf} \
             --by-motif {input.by_motif} \
-            --by-motif-genome {input.by_motif_genome} \
             --filtered {input.filtered} \
             --samples {params.samples} --reftypes {params.reftypes}
         """
