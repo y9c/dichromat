@@ -625,7 +625,7 @@ rule trim_reads:
         fi
         # SE runs declare c2/s2 outputs but cutseq only writes R1; create empty
         # R2 files so Snakemake sees all declared outputs produced.
-        {params.se_touch} touch {output.c2} {output.s2}
+        {params.se_touch} mkdir -p $(dirname {output.c2}) $(dirname {output.s2}) &&         {params.se_touch} touch {output.c2} {output.s2}
         """
 
 
