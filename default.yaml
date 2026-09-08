@@ -29,18 +29,26 @@ path:
   mqc_sites: "/opt/app_venv/bin/python /pipeline/src/mqc_sites.py"
 
 min_len: 20
-# Alignment parameters for the main mapping step.
+# Global alignment filters for the main mapping step.  The per-layer
+# ``filter:`` in the ``mapping:`` block overrides these for layers that declare
+# their own.
 #   min_mapping_ratio: fraction of the read that must align (0.8 default).
-#   max_mismatches:    max mismatches tolerated (6 default; lower rejects more
+#   max_mismatches:    max mismatches tolerated (2 default; lower rejects more
 #                      C->T background for the A2G-only case, but MK models it).
 min_mapping_ratio: 0.8
 max_mismatches: 2
 markdup: true
-splice_genome: true
-splice_contamination: false
 pileup_ct: false
 depth_site: false
-secondary_change: ""
+
+# countmut read-gate parameters (the -e group router; defaults mirror the
+# legacy 0.0.8 gate).
+countmut:
+  max_sub: 1     # NS cap: reads with NS > max_sub are dropped
+  min_con: 1     # Yf floor: high-conversion gate
+  max_unc: 3     # Zf cap: low-conversion gate
+  min_baseq: 20  # minimum base quality
+  trim: 2        # 5'/3' read-end trim
 
 # Minimum depth for sites to be included in merged output
 # Lower values include more sites but may increase noise

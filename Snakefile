@@ -136,8 +136,6 @@ PATH = SimpleNamespace(**config.get("path", {}))
 INTERNALDIR = Path("internal_files")
 BENCHDIR = Path(".snakemake/benchmarks")
 MARKDUP = config.get("markdup", True)
-SPLICE_GENOME = config.get("splice_genome", True)
-SPLICE_CONTAM = config.get("splice_contamination", False)
 
 
 wildcard_constraints:
@@ -194,6 +192,36 @@ _pipeline_layers = [l for l in _mapping_cfg.get("layers", []) if l.get("key")]
 # into the run/workspace directory, so each run gets its own copy).
 PIPELINE_PATH = "mapping.generated.yaml"
 LAYER_KEYS = [str(l.get("key")) for l in _pipeline_layers]
+
+# Derive the base-change / secondary-change (the conversion chemistry) from the
+# first layer's ``mutation_classes`` (single source of truth).  base_change is
+# the comma-joined source bases (e.g. "A,C"); secondary_change the targets
+# (e.g. "G,T").  Falls back to the (now-removed) config keys for compatibility.
+_first_mut_classes = next(
+    (l.get("mutation_classes") for l in _pipeline_layers if l.get("mutation_classes")),
+    None,
+)
+if _first_mut_classes:
+    BASE_CHANGE = ",".join(str(c.get("source")) for c in _first_mut_classes)
+    SECONDARY_CHANGE = ",".join(str(c.get("target")) for c in _first_mut_classes)
+else:
+    BASE_CHANGE = config.get("base_change", "A,G")
+    SECONDARY_CHANGE = config.get("secondary_change", "")
+
+# Global alignment filters (used by map_cascade / countmut).  The per-layer
+# ``filter:`` in the mapping block overrides these for the layer that declares
+# them.
+MIN_MAPPING_RATIO = config.get("min_mapping_ratio", 0.8)
+MAX_MISMATCHES = config.get("max_mismatches", 2)
+
+# countmut read-gate parameters (the -e group router).  Consolidated into a
+# single ``countmut:`` block; defaults mirror the legacy 0.0.8 gate.
+COUNTMUT = config.get("countmut", {})
+COUNTMUT_MAX_SUB = COUNTMUT.get("max_sub", 1)
+COUNTMUT_MIN_CON = COUNTMUT.get("min_con", 1)
+COUNTMUT_MAX_UNC = COUNTMUT.get("max_unc", 3)
+COUNTMUT_MIN_BASEQ = COUNTMUT.get("min_baseq", 20)
+COUNTMUT_TRIM = COUNTMUT.get("trim", 2)
 HAS_TRANSCRIPT = "transcript" in LAYER_KEYS
 HAS_GENOME = "genome" in LAYER_KEYS
 # The genome layer's engine decides how its reference is bound: a spliced
@@ -214,6 +242,43 @@ _site_layers = [str(l.get("key")) for l in _pipeline_layers if l.get("site")]
 SITE_REFTYPES = _site_layers or [
     r for r in LAYER_KEYS if r in ("transcript", "genome")
 ]
+
+# Map each layer key to its reference FASTA path.  The reference for a layer is
+# the prepared file in internal_files/ref/ (contamination/genes/transcript) or
+# the external genome FASTA.  This is the single source for ``-r key=path``
+# bindings and for run_countmut's per-reftype reference resolution, so rules do
+# not hand-code ``reftype == 'transcript' -> transcript.fa`` lambdas.
+def _layer_ref_fa(key: str) -> str:
+    if key == "contamination":
+        return str(INTERNALDIR / "ref/contamination.fa")
+    if key == "genes":
+        return str(INTERNALDIR / "ref/genes.fa")
+    if key == "transcript":
+        return str(INTERNALDIR / "ref/transcript.fa")
+    if key == "genome":
+        return REF["genome"]["fa"]
+    raise KeyError(f"no reference path for layer key {key!r}")
+
+REF_BY_LAYER = {k: _layer_ref_fa(k) for k in LAYER_KEYS}
+
+# Map a layer key to the map_cascade output attribute holding its BAM.
+_OUT_ATTR = {"contamination": "contam", "genes": "genes", "transcript": "tx", "genome": "genome"}
+def _out_attr(key: str) -> str:
+    return _OUT_ATTR[key]
+
+# Build the ``-r key=fa[:index_prefix]`` binding for a layer.  A hisat3n layer
+# (contamination, or a spliced genome) is bound as ``fa:index_prefix`` so the
+# prebuilt ``.3n`` index is reused; bwa-mem2 layers are bound by FASTA only.
+def _layer_ref_binding(key: str) -> str:
+    fa = REF_BY_LAYER[key]
+    layer = next((l for l in _pipeline_layers if l.get("key") == key), {})
+    engine = str(layer.get("engine", ""))
+    if "hisat3n" in engine:
+        if key == "genome" and REF.get("genome", {}).get("hisat3n"):
+            return f"{fa}:{REF['genome']['hisat3n']}"
+        if key == "contamination":
+            return f"{fa}:{str(INTERNALDIR / 'ref/contamination/index')}"
+    return fa
 
 
 def is_pe(sample, rn):
@@ -360,7 +425,7 @@ rule build_contamination_hisat3n_index:
     output:
         INTERNALDIR / "ref/contamination/index.indexed",
     params:
-        basechange=config.get("base_change", "A,G"),
+        basechange=BASE_CHANGE,
         prefix=str(INTERNALDIR / "ref/contamination/index"),
     threads: 64
     benchmark:
@@ -575,11 +640,8 @@ rule map_cascade:
             if is_pe(wildcards.sample, wildcards.rn)
             else []
         ),
-        cont_fa=INTERNALDIR / "ref/contamination.fa" if HAS_CONTAM else [],
-        cont_idx=INTERNALDIR / "ref/contamination/index.indexed" if HAS_CONTAM else [],
-        genes_fa=INTERNALDIR / "ref/genes.fa" if HAS_GENES else [],
-        tx_fa=INTERNALDIR / "ref/transcript.fa" if HAS_TRANSCRIPT else [],
-        genome_fa=REF["genome"]["fa"],
+        # Reference FASTA for each active layer (from the mapping block).
+        refs=lambda wildcards: [REF_BY_LAYER[k] for k in LAYER_KEYS],
     output:
         contam=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.contam.bam") if HAS_CONTAM else [],
         genes=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genes.bam") if HAS_GENES else [],
@@ -593,36 +655,17 @@ rule map_cascade:
     params:
         # The prismalign pipeline YAML (declares which layers run).
         pipeline=PIPELINE_PATH,
-        max_mismatches=config.get("max_mismatches", 2),
-        # The genome hisat-3n index prefix is a directory-style prefix (not a
-        # single file), so it is referenced directly (not via input, which
-        # Snakemake would check for existence).
-        cont_ref=lambda wildcards, input: (
-            f"-r contamination={input.cont_fa}:{str(INTERNALDIR / 'ref/contamination/index')}"
-            if HAS_CONTAM
-            else ""
+        max_mismatches=MAX_MISMATCHES,
+        # Build the -r key=path bindings from the active layers.  The genome
+        # hisat-3n index prefix is a directory-style prefix (not a single file)
+        # so it is appended after the FASTA; the contamination hisat-3n index
+        # is likewise referenced by prefix.
+        ref_bindings=lambda wildcards, input: " ".join(
+            f"-r {k}={_layer_ref_binding(k)}" for k in LAYER_KEYS
         ),
-        genes_ref=lambda wildcards, input: (
-            f"-r genes={input.genes_fa}" if HAS_GENES else ""
+        out_bindings=lambda wildcards, output: " ".join(
+            f"-o {k}={getattr(output, _out_attr(k))}" for k in LAYER_KEYS
         ),
-        tx_ref=lambda wildcards, input: (
-            f"-r transcript={input.tx_fa}" if HAS_TRANSCRIPT else ""
-        ),
-        genome_ref=lambda wildcards, input: (
-            f"-r genome={input.genome_fa}:{REF['genome']['hisat3n']}"
-            if GENOME_HAS_HISAT3N
-            else f"-r genome={input.genome_fa}"
-        ),
-        cont_out=lambda wildcards, output: (
-            f"-o contamination={output.contam}" if HAS_CONTAM else ""
-        ),
-        genes_out=lambda wildcards, output: (
-            f"-o genes={output.genes}" if HAS_GENES else ""
-        ),
-        tx_out=lambda wildcards, output: (
-            f"-o transcript={output.tx}" if HAS_TRANSCRIPT else ""
-        ),
-        genome_out=lambda wildcards, output: f"-o genome={output.genome}",
         r2=lambda wildcards, input: (
             f"-2 {input.fq2}" if is_pe(wildcards.sample, wildcards.rn) else ""
         ),
@@ -630,9 +673,9 @@ rule map_cascade:
         """
         set -eo pipefail
         {PATH.prismalign} -p {params.pipeline} \
-            {params.cont_ref} {params.genes_ref} {params.tx_ref} {params.genome_ref} \
+            {params.ref_bindings} \
             -1 {input.fq1} {params.r2} \
-            {params.cont_out} {params.genes_out} {params.tx_out} {params.genome_out} \
+            {params.out_bindings} \
             -u {output.unmap} -R {output.summary} \
             -t {threads} -m {params.max_mismatches}
         """
@@ -1153,15 +1196,7 @@ rule run_countmut:
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
         bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
-        ref=lambda wildcards: (
-            INTERNALDIR / "ref/transcript.fa"
-            if wildcards.reftype == "transcript"
-            else (
-                INTERNALDIR / "ref/genes.fa"
-                if wildcards.reftype == "genes"
-                else REF["genome"]["fa"]
-            )
-        ),
+        ref=lambda wildcards: REF_BY_LAYER[wildcards.reftype],
     output:
         temp(TEMPDIR / "pileup/{sample}.{reftype}.tsv"),
     params:
@@ -1173,12 +1208,12 @@ rule run_countmut:
             "([NS] <= {}) and (([Yf] >= {} and [Zf] <= {} and bq >= {}"
             " and qpos >= {} and qlen - qpos > {}) and 1 or 0)"
         ).format(
-            config.get("countmut_max_sub", 1),
-            config.get("countmut_min_con", 1),
-            config.get("countmut_max_unc", 3),
-            config.get("countmut_min_baseq", 20),
-            config.get("countmut_trim", 2),
-            config.get("countmut_trim", 2),
+            COUNTMUT_MAX_SUB,
+            COUNTMUT_MIN_CON,
+            COUNTMUT_MAX_UNC,
+            COUNTMUT_MIN_BASEQ,
+            COUNTMUT_TRIM,
+            COUNTMUT_TRIM,
         ),
         # Target-base sites only.  `base` is a strand-aware reference base:
         # it is the target base when the site is a mutation site on EITHER
@@ -1253,7 +1288,7 @@ rule motif_conversion_rate_stat:
     output:
         INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
     params:
-        target_base=config.get("base_change", "A,G").split(",")[0].upper(),
+        target_base=BASE_CHANGE.split(",")[0].upper(),
     benchmark:
         BENCHDIR / "motif_conversion_rate_stat_{sample}_{reftype}.benchmark.txt"
     shell:
@@ -1434,7 +1469,7 @@ rule mqc_aggregate_site_stats:
             reftype=SITE_REFTYPES,
         ),
     params:
-        target_base=config.get("base_change", "A,G").split(",")[0],
+        target_base=BASE_CHANGE.split(",")[0],
         reftype_tables=lambda wildcards, output: " ".join(
             f"--reftype-table {r}={output.reftype_tables[i]}"
             for i, r in enumerate(SITE_REFTYPES)
