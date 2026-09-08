@@ -196,20 +196,43 @@ _pipeline_layers = [l for l in _mapping_cfg.get("layers", []) if l.get("key")]
 PIPELINE_PATH = "mapping.generated.yaml"
 LAYER_KEYS = [str(l.get("key")) for l in _pipeline_layers]
 
-# Derive the base-change / secondary-change (the conversion chemistry) from the
-# first layer's ``mutation_classes`` (single source of truth).  base_change is
-# the comma-joined source bases (e.g. "A,C"); secondary_change the targets
-# (e.g. "G,T").
+# Derive the base-change / secondary-change (the conversion chemistry) from
+# the first layer's ``scheme``, falling back to an explicit
+# ``mutation_classes`` override when a layer declares one.  base_change is the
+# comma-joined source bases (e.g. "A,C"); secondary_change the targets
+# (e.g. "G,T").  MK -> A->G + C->T.  This mirrors prismalign's scheme registry
+# (prismalign/schemes.py) so the Snakefile needs no prismalign import.
+_SCHEME_CLASSES = {
+    "MK": (("A", "G"), ("C", "T")),
+    "KM": (("G", "A"), ("T", "C")),
+    "BS": (("C", "T"),),
+    "SLAM": (("T", "C"),),
+    "A2G": (("A", "G"),),
+    "PLAIN": (("A", "A"),),
+    "THREE": (("A", "G"), ("C", "T")),
+}
+
 _first_mut_classes = next(
     (l.get("mutation_classes") for l in _pipeline_layers if l.get("mutation_classes")),
     None,
 )
-if not _first_mut_classes:
-    raise ValueError("No layer declares `mutation_classes`; the conversion "
-                     "chemistry (base_change/secondary_change) must be "
-                     "declared via `mutation_classes` in the mapping block.")
-BASE_CHANGE = ",".join(str(c.get("source")) for c in _first_mut_classes)
-SECONDARY_CHANGE = ",".join(str(c.get("target")) for c in _first_mut_classes)
+if _first_mut_classes:
+    BASE_CHANGE = ",".join(str(c.get("source")) for c in _first_mut_classes)
+    SECONDARY_CHANGE = ",".join(str(c.get("target")) for c in _first_mut_classes)
+else:
+    _first_scheme = next(
+        (l.get("scheme") for l in _pipeline_layers if l.get("scheme")),
+        None,
+    )
+    if not _first_scheme or _first_scheme not in _SCHEME_CLASSES:
+        raise ValueError(
+            f"Cannot derive conversion chemistry: no layer declares "
+            f"`mutation_classes` and no layer declares a known `scheme` "
+            f"(got {_first_scheme!r}); known schemes: {sorted(_SCHEME_CLASSES)}."
+        )
+    _first_classes = _SCHEME_CLASSES[_first_scheme]
+    BASE_CHANGE = ",".join(c[0] for c in _first_classes)
+    SECONDARY_CHANGE = ",".join(c[1] for c in _first_classes)
 
 # Global alignment filters (used by map_cascade / countmut).  The per-layer
 # ``filter:`` in the mapping block overrides these for the layer that declares

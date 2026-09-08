@@ -20,13 +20,6 @@ mapping:
       site: true
       engine: bwa-mem2
       scheme: MK
-      mutation_classes:
-        - name: A_to_G
-          source: A
-          target: G
-        - name: C_to_T
-          source: C
-          target: T
       filter:
         min_mapping_ratio: 0.8
         max_conversion_rates: [1.0, 0.33]
