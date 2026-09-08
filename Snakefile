@@ -489,60 +489,57 @@ rule prepare_reference:
 # ---------------------------------------------------------------------------
 
 
-rule trim_se:
-    input:
-        lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
-    output:
-        c=temp(TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz"),
-        s=INTERNALDIR / "fastq/discarded/SE/{sample}_{rn}_R1.fq.gz",
-        report=INTERNALDIR / "qc/trimming/SE/{sample}_{rn}_mqc.tsv",
-    params:
-        minlen=config.get("min_len", 20),
-        trim=str(config.get("trim", True)).lower(),
-        cut=lambda wildcards: f"-A '{SAMPLE2ADAPTER[wildcards.sample]}'",
-    threads: 8
-    benchmark:
-        BENCHDIR / "trim_se_{sample}_{rn}.benchmark.txt"
-    shell:
-        """
-        if [ "{params.trim}" = "false" ]; then
-            cp {input} {output.c} && \
-            gzip -n -c /dev/null > {output.s} && \
-            printf 'sample\trun\tinput_reads\toutput_reads\tdiscarded_reads\tadapter\n{wildcards.sample}\t{wildcards.rn}\t0\t0\t0\tpassthrough\n' > {output.report}
-        else
-            {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c} -d {output.s} --json-file {output.report} {input}
-        fi
-        """
+rule trim_reads:
+    """Trim adapters (cutseq) for SE or PE reads.
 
-
-rule trim_pe:
+    The {libmode} wildcard (SE/PE) selects the read layout: SE trims R1 only;
+    PE trims R1 + R2.  Writes trimmed reads to TEMPDIR, discarded reads and
+    the trim report directly to internal_files.
+    """
     input:
         r1=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
-        r2=lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R2") or [],
+        r2=lambda wildcards: (
+            SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R2") or []
+            if is_pe(wildcards.sample, wildcards.rn)
+            else []
+        ),
     output:
-        c1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz"),
-        c2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz"),
-        s1=INTERNALDIR / "fastq/discarded/PE/{sample}_{rn}_R1.fq.gz",
-        s2=INTERNALDIR / "fastq/discarded/PE/{sample}_{rn}_R2.fq.gz",
-        report=INTERNALDIR / "qc/trimming/PE/{sample}_{rn}_mqc.tsv",
+        c1=temp(TEMPDIR / "trim/{libmode}/{sample}_{rn}_R1.fq.gz"),
+        c2=temp(TEMPDIR / "trim/{libmode}/{sample}_{rn}_R2.fq.gz"),
+        s1=INTERNALDIR / "fastq/discarded/{libmode}/{sample}_{rn}_R1.fq.gz",
+        s2=INTERNALDIR / "fastq/discarded/{libmode}/{sample}_{rn}_R2.fq.gz",
+        report=INTERNALDIR / "qc/trimming/{libmode}/{sample}_{rn}_mqc.tsv",
     params:
         minlen=config.get("min_len", 20),
         trim=str(config.get("trim", True)).lower(),
         cut=lambda wildcards: f"-A '{SAMPLE2ADAPTER[wildcards.sample]}'",
+        # PE adds R2 args to cutseq; SE trims R1 only.
+        pe=lambda wildcards: is_pe(wildcards.sample, wildcards.rn),
+        # Shell prefix for PE-only copy/gzip steps (empty for PE, '#' comment for SE).
+        pe_cp=lambda wildcards: "" if is_pe(wildcards.sample, wildcards.rn) else "#",
+        # cutseq args: SE trims R1 only; PE trims R1 + R2.
+        cutseq_args=lambda wildcards, output, input: (
+            f"-o {output.c1} {output.c2} -d {output.s1} {output.s2} "
+            f"--json-file {output.report} {input.r1} {input.r2}"
+            if is_pe(wildcards.sample, wildcards.rn)
+            else f"-o {output.c1} -d {output.s1} "
+                 f"--json-file {output.report} {input.r1}"
+        ),
     threads: 8
     benchmark:
-        BENCHDIR / "trim_pe_{sample}_{rn}.benchmark.txt"
+        BENCHDIR / "trim_reads_{libmode}_{sample}_{rn}.benchmark.txt"
     shell:
         """
         if [ "{params.trim}" = "false" ]; then
             # trim: false -> passthrough (reads already trimmed/UMI-extracted upstream)
             cp {input.r1} {output.c1} && \
-            cp {input.r2} {output.c2} && \
+            {params.pe_cp} cp {input.r2} {output.c2} && \
             gzip -n -c /dev/null > {output.s1} && \
-            gzip -n -c /dev/null > {output.s2} && \
+            {params.pe_cp} gzip -n -c /dev/null > {output.s2} && \
             printf 'sample\trun\tinput_reads\toutput_reads\tdiscarded_reads\tadapter\n{wildcards.sample}\t{wildcards.rn}\t0\t0\t0\tpassthrough\n' > {output.report}
         else
-            {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} {output.c2} -d {output.s1} {output.s2} --json-file {output.report} {input.r1} {input.r2}
+            {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc \
+                {params.cutseq_args}
         fi
         """
 
