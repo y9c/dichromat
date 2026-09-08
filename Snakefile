@@ -592,7 +592,7 @@ rule trim_reads:
     params:
         minlen=config.get("min_len", 20),
         trim=str(config.get("trim", True)).lower(),
-        cut=lambda wildcards: f"-A '{SAMPLE2ADAPTER[wildcards.sample]}'",
+        cut=lambda wildcards: f"-A {SAMPLE2ADAPTER[wildcards.sample]}",
         # PE adds R2 args to cutseq; SE trims R1 only.
         pe=lambda wildcards: is_pe(wildcards.sample, wildcards.rn),
         # Shell prefix for PE-only copy/gzip steps (empty for PE, '#' comment for SE).
@@ -616,7 +616,8 @@ rule trim_reads:
             {params.pe_cp} cp {input.r2} {output.c2} && \
             gzip -n -c /dev/null > {output.s1} && \
             {params.pe_cp} gzip -n -c /dev/null > {output.s2} && \
-            printf 'sample\trun\tinput_reads\toutput_reads\tdiscarded_reads\tadapter\n{wildcards.sample}\t{wildcards.rn}\t0\t0\t0\tpassthrough\n' > {output.report}
+            cat > {output.report} <<EOF
+sample\trun\tinput_reads\toutput_reads\tdiscarded_reads\tadapter\n{wildcards.sample}\t{wildcards.rn}\t0\t0\t0\tpassthrough\nEOF
         else
             # cutseq does not create output directories; make them first.
             mkdir -p $(dirname {output.c1}) $(dirname {output.s1}) $(dirname {output.report})
