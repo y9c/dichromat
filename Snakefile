@@ -267,10 +267,20 @@ ACTIVE_LAYERS = set(LAYER_KEYS)
 
 def has_layer(key: str) -> bool:
     return key in ACTIVE_LAYERS
-# The reference key used for site calling.  Site calling runs on the single
-# genome-coordinate BAM (liftover_bam), so there is exactly one site reftype:
-# the key of the reference that GTF-derived feature references lift to (via
-# ``liftover: <key>``).  If none, fall back to the conventional ``genome`` key.
+# Whether a reference is site-called (mutation calling).  Default: a
+# reference with ``liftover`` is NOT site-called separately (its reads are
+# lifted into the target's BAM and site-called there); a reference without
+# ``liftover`` IS site-called.  An explicit ``mutation: true/false`` overrides.
+def _ref_mutation(key: str) -> bool:
+    ref = REF.get(key, {})
+    if "mutation" in ref:
+        return bool(ref["mutation"])
+    return not bool(ref.get("liftover"))
+
+
+# The reference whose BAM receives the lifted reads (the ``liftover`` target
+# of any GTF-derived feature reference); it is the genome-coordinate site
+# calling target.  Fall back to the conventional ``genome`` key.
 _liftover_targets = {
     str(r.get("liftover"))
     for r in REF.values()
@@ -289,9 +299,10 @@ GENOME_HAS_HISAT3N = "hisat3n" in GENOME_ENGINE
 # optional pre/main masks; transcript+genome the main mapping layers).
 REFTYPES = LAYER_KEYS
 
-# Site-calling reftypes.  Site calling runs on the single genome-coordinate
-# BAM (liftover_bam), so there is exactly one site reftype: the site ref key.
-SITE_REFTYPES = [SITE_REF_KEY]
+# Site-calling reftypes: every reference whose ``mutation`` flag is true
+# (default: no liftover -> true; has liftover -> false).  Each is site-called
+# on its own BAM (the liftover target on the lifted BAM).
+SITE_REFTYPES = [k for k in LAYER_KEYS if _ref_mutation(k)]
 
 # Map each layer key to its reference FASTA path.  The reference for a layer is
 # the prepared file in internal_files/ref/ (for user FASTA or GTF-derived
@@ -325,6 +336,18 @@ def _out_attr(key: str) -> str:
 _BAM_SUFFIX = {"contamination": "contam", "genes": "genes", "transcript": "transcript", "genome": "genome"}
 def _bam_suffix(key: str) -> str:
     return _BAM_SUFFIX[key]
+
+
+def _site_bam(reftype: str, sample: str) -> str:
+    """The BAM to call sites on for a site reftype.
+
+    The liftover target (SITE_REF_KEY) is site-called on the lifted BAM
+    (transcript reads lifted to genome coords + genome reads).  Any other site
+    reftype is site-called on its own deduplicated BAM.
+    """
+    if reftype == SITE_REF_KEY:
+        return str(INTERNALDIR / f"liftover_bam/{sample}.bam")
+    return str(INTERNALDIR / f"bam/{sample}.{reftype}.bam")
 
 # Build the ``-r key=fa[:index_prefix]`` binding for a layer.  A hisat3n layer
 # Build the ``-r key=fa[:index_prefix]`` binding for a layer.  The prebuilt
@@ -1068,14 +1091,14 @@ rule run_countmut:
     motif_rate.
     """
     input:
-        # Site calling runs on the single genome-coordinate BAM produced by
-        # liftover_bam (transcript reads lifted to genome coords + genome
-        # reads), so there is one genome-coordinate pileup per sample.
-        bam=INTERNALDIR / "liftover_bam/{sample}.bam",
-        bai=INTERNALDIR / "liftover_bam/{sample}.bam.bai",
-        ref=lambda wildcards: REF_BY_LAYER[SITE_REF_KEY],
+        # Site calling runs on the site reftype's BAM: the liftover target
+        # (SITE_REF_KEY) on the lifted BAM (transcript reads lifted to genome
+        # coords + genome reads); any other site reftype on its own BAM.
+        bam=lambda wildcards: _site_bam(wildcards.reftype, wildcards.sample),
+        bai=lambda wildcards: _site_bam(wildcards.reftype, wildcards.sample) + ".bai",
+        ref=lambda wildcards: REF_BY_LAYER[wildcards.reftype],
     output:
-        INTERNALDIR / f"pileup/per_sample/{{sample}}.{SITE_REF_KEY}.tsv.gz",
+        INTERNALDIR / f"pileup/per_sample/{{sample}}.{{reftype}}.tsv.gz",
     params:
         # 2-group router (countmut >= 0.2.2): group 1 = high-conversion bases
         # (legacy 0.0.8 gate), group 0 = all other kept bases; NS > max_sub
@@ -1114,7 +1137,7 @@ rule run_countmut:
         ),
     threads: 64
     benchmark:
-        BENCHDIR / "run_countmut_{sample}.benchmark.txt"
+        BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
     shell:
         "{PATH.countmut} -i {input.bam} -r {input.ref} -o - -t {threads} -e \"{params.router}\" -p \"{params.site_filter}\" --motif-pad 15 --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\" | {PATH.bgzip} -@ {threads} -c > {output}"
 
@@ -1128,13 +1151,13 @@ rule motif_rate:
     report the same per-motif stats over ALL kept groups (u0+u1 unconverted,
     u0+u1+m0+m1 depth)."""
     input:
-        pileup=INTERNALDIR / f"pileup/per_sample/{{sample}}.{SITE_REF_KEY}.tsv.gz",
+        pileup=INTERNALDIR / f"pileup/per_sample/{{sample}}.{{reftype}}.tsv.gz",
     output:
-        INTERNALDIR / f"stats/ratio/by_motif/{{sample}}.{SITE_REF_KEY}.tsv",
+        INTERNALDIR / f"stats/ratio/by_motif/{{sample}}.{{reftype}}.tsv",
     params:
         target_base=BASE_CHANGE.split(",")[0].upper(),
     benchmark:
-        BENCHDIR / "motif_rate_{sample}.benchmark.txt"
+        BENCHDIR / "motif_rate_{sample}_{reftype}.benchmark.txt"
     shell:
         "zcat {input.pileup} | awk -F '\\t' -v target=\"{params.target_base}\" "
         '\'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio","Count_all","Unconverted_all","Depth_all","Ratio_all"}} '
@@ -1148,12 +1171,14 @@ rule motif_rate:
 
 rule join_pileup:
     input:
+        # The {reftype} wildcard comes from the output; expand over samples.
         expand(
-            INTERNALDIR / f"pileup/per_sample/{{sample}}.{SITE_REF_KEY}.tsv.gz",
+            INTERNALDIR / f"pileup/per_sample/{{sample}}.{{reftype}}.tsv.gz",
             sample=SAMPLE2DATA.keys(),
+            reftype=SITE_REFTYPES,
         ),
     output:
-        INTERNALDIR / f"pileup/{SITE_REF_KEY}.parquet",
+        INTERNALDIR / f"pileup/{{reftype}}.parquet",
     params:
         samples=" ".join(SAMPLE2DATA.keys()),
         requires=" ".join(
@@ -1161,7 +1186,7 @@ rule join_pileup:
         ),
     threads: lambda wildcards, input: min(int(len(input) * 4), 32)
     benchmark:
-        BENCHDIR / "join_pileup.benchmark.txt"
+        BENCHDIR / "join_pileup_{reftype}.benchmark.txt"
     shell:
         """
         {PATH.merge_samples} --files {input} --names {params.samples} --output {output} --requires {params.requires}
@@ -1169,15 +1194,18 @@ rule join_pileup:
 
 
 rule merge_sites:
-    """Write the final sites table from the genome-coordinate pileup.
+    """Write the final sites table from the site-calling pileups.
 
-    Site calling runs on the single genome-coordinate BAM (liftover_bam), so
-    transcript and genome sites are already unified in genome space before
-    counting.  This rule just converts the merged genome pileup
-    (pileup/genome.parquet) to the report_sites/sites.tsv.gz table.
+    Each site reftype (mutation: true) is site-called on its own BAM; the
+    liftover target is site-called on the lifted BAM (transcript reads lifted
+    to genome coords + genome reads).  This rule unions every site reftype's
+    pileup into the report_sites/sites.tsv.gz table.
     """
     input:
-        genome=INTERNALDIR / f"pileup/{SITE_REF_KEY}.parquet",
+        pileups=expand(
+            INTERNALDIR / "pileup/{reftype}.parquet",
+            reftype=SITE_REFTYPES,
+        ),
     output:
         "report_sites/sites.tsv.gz",
     threads: 32
@@ -1187,7 +1215,7 @@ rule merge_sites:
         runtime=720
     shell:
         """
-        {PATH.remap_genome} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
+        {PATH.remap_genome} -b {input.pileups} -o {output} --min-depth {config[min_merged_depth]}
         """
 
 
@@ -1367,8 +1395,9 @@ rule report_sites:
         gtf=REF[SITE_REF_KEY]["gtf"],
         # per-sample motif conversion + enrichment
         by_motif=expand(
-            INTERNALDIR / f"stats/ratio/by_motif/{{sample}}.{SITE_REF_KEY}.tsv",
+            INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
             sample=SAMPLE2DATA.keys(),
+            reftype=SITE_REFTYPES,
         ),
         filtered="report_sites/filtered.tsv",
     output:

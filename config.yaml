@@ -73,15 +73,17 @@ reference:
     fa:
       - ~/reference/contamination/contamination.fa
       - /data/project/changye/chye/projects/m6A_new/ref/PET28a-tadA.fa
+    mutation: false        # masking layer: mapped but not site-called
 
   - key: genes
     fa:
       - ~/rawdata_public/GLORI_v3/ref.fa
       - ~/reference/genes/Homo_sapiens.rRNA_tRNA_sncRNA.fa
+    # no liftover -> mutation defaults to true (site-called on its own BAM)
 
   - key: transcript
     gtf: ~/reference/genome/Homo_sapiens/GRCh38.release110.gtf
-    liftover: genome
+    liftover: genome       # lifted into the genome BAM; not site-called separately
 
   - key: genome
     fa: ~/reference/genome/Homo_sapiens/GRCh38.fa
