@@ -3,21 +3,18 @@
 General conversion-based RNA-seq pipeline (eTAM-seq / CAM-seq / GLORI /
 BS-seq, etc.).  High-level phases:
 
-  1. Reference & index preparation
-     combine_contamination_fa / combine_genes_fa / prepared_transcript_ref
-     build_contamination_hisat3n_index / index_transcript / index_genes
+  1. Reference preparation
+     prepare_reference (user FASTA combine + GTF-derived via coralsnake prepare)
   2. Trimming & read QC
      trim_se / trim_pe / qc_trimmed / report_qc_trimmed
   3. Competitive mapping cascade
-     premap_align_* (contamination) -> mainmap_align_* (genes+transcript)
-     -> remap_align_* (genome)
+     map_cascade (one prismalign call, all layers)
   4. BAM merge + dedup + stats
-     combine_bams / drop_duplicates / stat_* / count_reads
-  5. Site calling & table merge/remap
-     run_countmut / pileup_base / join_pileup_table
-     merge_gene_and_genome_table / filter_eTAM_sites
+     finalize_map_bam / finalize_map_summary / combine_bams / drop_duplicates
+  5. Site calling
+     run_countmut / pileup_base / join_pileup / merge_sites
   6. Site/read report generation
-     mqc_aggregate_* / generate_*_report / final_report
+     filter_sites / annotate_sites / mqc_aggregate_* / generate_*_report
 
 All rules share the resolved `config`, `PATH` (SimpleNamespace of tool
 commands) and path constants (INTERNALDIR / TEMPDIR / BENCHDIR).
@@ -189,12 +186,12 @@ for s, v in samples_dict.items():
 # The prismalign mapping layers are declared inline in the config (``mapping:``
 # block), so there is no separate pipeline YAML to maintain.  The Snakefile
 # derives the active reftypes here and generates the prismalign pipeline YAML
-# that the map_cascade rule consumes (see rule generate_pipeline_config).
+# that the map_cascade rule consumes (see rule prepare_mapping).
 _mapping_cfg = config.get("mapping", {})
 if not isinstance(_mapping_cfg, dict) or not _mapping_cfg.get("layers"):
     raise SystemExit("config 'mapping' block missing or has no 'layers'")
 _pipeline_layers = [l for l in _mapping_cfg.get("layers", []) if l.get("key")]
-# The generated prismalign pipeline YAML path (written by generate_pipeline_config
+# The generated prismalign pipeline YAML path (written by prepare_mapping
 # into the run/workspace directory, so each run gets its own copy).
 PIPELINE_PATH = "mapping.generated.yaml"
 LAYER_KEYS = [str(l.get("key")) for l in _pipeline_layers]
@@ -354,7 +351,7 @@ rule all:
 # ---------------------------------------------------------------------------
 
 
-rule generate_pipeline_config:
+rule prepare_mapping:
     """Write the prismalign pipeline YAML from the config ``mapping`` block.
 
     The mapping layers are declared inline in config.yaml (single source of
@@ -365,7 +362,7 @@ rule generate_pipeline_config:
     output:
         pipeline=PIPELINE_PATH,
     benchmark:
-        BENCHDIR / "generate_pipeline_config.benchmark.txt"
+        BENCHDIR / "prepare_mapping.benchmark.txt"
     run:
         import yaml as _yaml
         import os
@@ -761,7 +758,7 @@ rule finalize_unmapped_fq:
         """
 
 
-rule unmapped_qc:
+rule qc_unmapped:
     input:
         INTERNALDIR / "fastq/unmapped/{sample}_{rn}_{rd}.fq.gz",
     output:
@@ -773,7 +770,7 @@ rule unmapped_qc:
         # so point -o at the parent dir (falco makes the {sample}_{rn}_{rd} dir).
         lambda wildcards: INTERNALDIR / "qc/unmapped",
     benchmark:
-        BENCHDIR / "unmapped_qc_{sample}_{rn}_{rd}.benchmark.txt"
+        BENCHDIR / "qc_unmapped_{sample}_{rn}_{rd}.benchmark.txt"
     shell:
         """
         # falco cannot process an empty FASTQ (errors with \"invalid reads file
@@ -924,7 +921,7 @@ rule rnaseq_qc:
         shutil.move(outdir / f"{sample}.exon_reads.tsv", output.exons)
 
 
-rule liftover_transcript_to_genome:
+rule liftover_sites:
     input:
         transcripts=INTERNALDIR / "bam/{sample}.transcript.bam" if has_layer("transcript") else [],
         genome=INTERNALDIR / "bam/{sample}.genome.bam",
@@ -936,7 +933,7 @@ rule liftover_transcript_to_genome:
         fai=REF["genome"]["fa"] + ".fai",
     threads: 8
     benchmark:
-        BENCHDIR / "liftover_transcript_to_genome_{sample}.benchmark.txt"
+        BENCHDIR / "liftover_sites_{sample}.benchmark.txt"
     shell:
         """
         if [ -n '{input.transcripts}' ] && [ -s '{input.transcripts}' ]; then
@@ -1015,7 +1012,7 @@ rule count_reads:
 # ---------------------------------------------------------------------------
 
 
-rule cal_spike_ratio:
+rule spike_ratio:
     input:
         bam=lambda wildcards: (
             expand(INTERNALDIR / "bam/{sample}.genes.bam", sample=SAMPLE2DATA.keys())
@@ -1034,7 +1031,7 @@ rule cal_spike_ratio:
         tsv=INTERNALDIR / "stats/ratio/probe.tsv",
     threads: 8
     benchmark:
-        BENCHDIR / "cal_spike_ratio.benchmark.txt"
+        BENCHDIR / "spike_ratio.benchmark.txt"
     shell:
         """
         {PATH.bam_conv} {input.bam} > {output}
@@ -1058,12 +1055,12 @@ rule run_countmut:
       discarded failing reads.
 
     Group 1 (u1/m1) is byte-for-byte the legacy gated count set, so the
-    downstream consumers (unfilter_genes_stat / motif_conversion_rate_stat /
+    downstream consumers (unfilter_genes_stat / motif_rate /
     merge_samples) keep computing on u1/m1 only; u0/m0 are extra columns in
     the TSV.  NOTE: the 0.0.8 conversion gate reads the Yf/Zf
     (forward-channel) tags even for the C->T view -- kept here for parity.
     The 31-mer motif (pad 15) must stay in sync with substr($4,15,3) in
-    motif_conversion_rate_stat.
+    motif_rate.
     """
     input:
         bam=INTERNALDIR / "bam/{sample}.{reftype}.bam",
@@ -1126,7 +1123,7 @@ rule pileup_base:
         "{PATH.bgzip} -@ {threads} -c {input} > {output}"
 
 
-rule motif_conversion_rate_stat:
+rule motif_rate:
     """Per-3-mer conversion rate around target-base sites from the 8-column
     pileup (chrom pos strand motif u0 u1 m0 m1; motif 31-mer, center = 16th
     base, so the 3-mer is substr($4,15,3)).  The first five columns keep the
@@ -1141,7 +1138,7 @@ rule motif_conversion_rate_stat:
     params:
         target_base=BASE_CHANGE.split(",")[0].upper(),
     benchmark:
-        BENCHDIR / "motif_conversion_rate_stat_{sample}_{reftype}.benchmark.txt"
+        BENCHDIR / "motif_rate_{sample}_{reftype}.benchmark.txt"
     shell:
         "zcat {input.pileup} | awk -F '\\t' -v target=\"{params.target_base}\" "
         '\'BEGIN{{OFS="\\t";print "Motif","Count","Unconverted","Depth","Ratio","Count_all","Unconverted_all","Depth_all","Ratio_all"}} '
@@ -1153,7 +1150,7 @@ rule motif_conversion_rate_stat:
         "END{{for(m in da) print m,(n1[m]+0),(u1[m]+0),(d1[m]+0),(n1[m]>0?r1[m]/n1[m]:0),na[m],ua[m],da[m],ra[m]/na[m]}}' > {output}"
 
 
-rule join_pileup_table:
+rule join_pileup:
     input:
         expand(
             INTERNALDIR / "pileup/per_sample/{sample}.{{reftype}}.tsv.gz",
@@ -1168,14 +1165,14 @@ rule join_pileup_table:
         ),
     threads: lambda wildcards, input: min(int(len(input) * 4), 32)
     benchmark:
-        BENCHDIR / "join_pileup_table_{reftype}.benchmark.txt"
+        BENCHDIR / "join_pileup_{reftype}.benchmark.txt"
     shell:
         """
         {PATH.merge_samples} --files {input} --names {params.samples} --output {output} --requires {params.requires}
         """
 
 
-rule merge_gene_and_genome_table:
+rule merge_sites:
     """Merge the site-calling pileups into the final sites table.
 
     With a transcript layer present, remap_genome lifts transcript sites to
@@ -1194,7 +1191,7 @@ rule merge_gene_and_genome_table:
         "report_sites/sites.tsv.gz",
     threads: 32
     benchmark:
-        BENCHDIR / "merge_gene_and_genome_table.benchmark.txt"
+        BENCHDIR / "merge_sites.benchmark.txt"
     resources:
         runtime=720
     params:
@@ -1251,7 +1248,7 @@ rule annotate_sites:
         """
 
 
-rule group_and_pval_cal:
+rule group_sites:
     input:
         "report_sites/sites.tsv.gz",
     output:
@@ -1260,7 +1257,7 @@ rule group_and_pval_cal:
         names=lambda wildcards: GROUP2SAMPLE[wildcards.group],
     threads: 8
     benchmark:
-        BENCHDIR / "group_and_pval_cal_{group}.benchmark.txt"
+        BENCHDIR / "group_sites_{group}.benchmark.txt"
     shell:
         """
         {PATH.sum_groups} -i {input} -o {output} -n {params.names}
@@ -1272,7 +1269,7 @@ rule group_and_pval_cal:
 # ---------------------------------------------------------------------------
 
 
-rule mqc_aggregate_mapping_stats:
+rule mqc_mapping:
     input:
         counts=expand(
             INTERNALDIR / "stats/count/{sample}.tsv", sample=SAMPLE2DATA.keys()
@@ -1291,7 +1288,7 @@ rule mqc_aggregate_mapping_stats:
         mapping=INTERNALDIR / "stats/mqc/reads/mapping_stats_mqc.tsv",
         dedup=INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
     benchmark:
-        BENCHDIR / "mqc_aggregate_mapping_stats.benchmark.txt"
+        BENCHDIR / "mqc_mapping.benchmark.txt"
     threads: 4
     shell:
         """
@@ -1300,7 +1297,7 @@ rule mqc_aggregate_mapping_stats:
         """
 
 
-rule mqc_aggregate_site_stats:
+rule mqc_sites:
     input:
         motifs=expand(
             INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
@@ -1326,7 +1323,7 @@ rule mqc_aggregate_site_stats:
             for i, r in enumerate(SITE_REFTYPES)
         ),
     benchmark:
-        BENCHDIR / "mqc_aggregate_site_stats.benchmark.txt"
+        BENCHDIR / "mqc_sites.benchmark.txt"
     threads: 16
     resources:
         runtime=720
@@ -1337,7 +1334,7 @@ rule mqc_aggregate_site_stats:
         """
 
 
-rule generate_mapping_report:
+rule report_mapping:
     input:
         INTERNALDIR / "stats/mqc/reads/mapping_stats_mqc.tsv",
         INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
@@ -1354,12 +1351,12 @@ rule generate_mapping_report:
         report_name="mapping.html",
         report_dir=str(Path("report_reads")),
     benchmark:
-        BENCHDIR / "generate_mapping_report.benchmark.txt"
+        BENCHDIR / "report_mapping.benchmark.txt"
     shell:
         "{PATH.report_html} tables {output} {input}"
 
 
-rule generate_site_report:
+rule report_sites:
     input:
         INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
         INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
@@ -1375,12 +1372,12 @@ rule generate_site_report:
         report_name="sites.html",
         report_dir=str(Path("report_sites")),
     benchmark:
-        BENCHDIR / "generate_site_report.benchmark.txt"
+        BENCHDIR / "report_sites.benchmark.txt"
     shell:
         "{PATH.report_html} tables {output} {input}"
 
 
-rule generate_metagene_profile:
+rule metagene_profile:
     """Metagene coverage distribution of the remapped sites (machine-readable)."""
     input:
         sites="report_sites/sites.tsv.gz",
@@ -1389,7 +1386,7 @@ rule generate_metagene_profile:
         prof=INTERNALDIR / "stats/report/metagene_profile.tsv",
     threads: 8
     benchmark:
-        BENCHDIR / "generate_metagene_profile.benchmark.txt"
+        BENCHDIR / "metagene_profile.benchmark.txt"
     shell:
         """
         {PATH.coralsnake} metagene -i {input.sites} -g {input.gtf} -H \
@@ -1397,7 +1394,7 @@ rule generate_metagene_profile:
         """
 
 
-rule generate_logo_matrix:
+rule logo_matrix:
     """Sequence-context logo around remapped sites (matrix, not a figure).
 
     Uses the per-site context already present in the sites table (`Motif`
@@ -1409,7 +1406,7 @@ rule generate_logo_matrix:
         matrix=INTERNALDIR / "stats/report/logo_matrix.tsv",
     threads: 8
     benchmark:
-        BENCHDIR / "generate_logo_matrix.benchmark.txt"
+        BENCHDIR / "logo_matrix.benchmark.txt"
     shell:
         """
         zcat {input.sites} \
@@ -1419,16 +1416,16 @@ rule generate_logo_matrix:
         """
 
 
-rule generate_sites_extra_report:
+rule report_extra:
     """Render metagene coverage + sequence logo sections (sample-independent)."""
     input:
-        prof=rules.generate_metagene_profile.output.prof,
-        matrix=rules.generate_logo_matrix.output.matrix,
+        prof=rules.metagene_profile.output.prof,
+        matrix=rules.logo_matrix.output.matrix,
     output:
         meta=INTERNALDIR / "stats/report/metagene.html",
         logo=INTERNALDIR / "stats/report/logo.html",
     benchmark:
-        BENCHDIR / "generate_sites_extra_report.benchmark.txt"
+        BENCHDIR / "report_extra.benchmark.txt"
     shell:
         """
         {PATH.report_html} metagene {output.meta} {input.prof}
@@ -1436,19 +1433,19 @@ rule generate_sites_extra_report:
         """
 
 
-rule generate_motifconv_report:
+rule report_motif:
     """Per-motif conversion-rate section (one per sample x reftype)."""
     input:
         INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
     output:
         INTERNALDIR / "stats/report/motif.{sample}.{reftype}.html",
     benchmark:
-        BENCHDIR / "generate_motifconv_report_{sample}_{reftype}.benchmark.txt"
+        BENCHDIR / "report_motif_{sample}_{reftype}.benchmark.txt"
     shell:
         "{PATH.report_html} motifconv {output} {input}"
 
 
-rule generate_motif_enrich:
+rule motif_enrich:
     """Per-motif enrichment & conversion summary (genome candidates vs
     filtered sites): one row per 3-mer with candidates, filtered count,
     enrichment per 1,000 candidates and depth-weighted conversion
@@ -1459,24 +1456,24 @@ rule generate_motif_enrich:
     output:
         tsv=INTERNALDIR / "stats/report/motif_enrich.{sample}.tsv",
     benchmark:
-        BENCHDIR / "generate_motif_enrich_{sample}.benchmark.txt"
+        BENCHDIR / "motif_enrich_{sample}.benchmark.txt"
     shell:
         "{PATH.motif_enrich} -i {input.by_motif} -f {input.filtered} -s {wildcards.sample} -o {output.tsv}"
 
 
-rule generate_motif_enrich_report:
+rule report_enrich:
     """Render the motif enrichment section of the final report (one per sample)."""
     input:
-        tsv=rules.generate_motif_enrich.output.tsv,
+        tsv=rules.motif_enrich.output.tsv,
     output:
         html=INTERNALDIR / "stats/report/motif_enrich.{sample}.html",
     benchmark:
-        BENCHDIR / "generate_motif_enrich_report_{sample}.benchmark.txt"
+        BENCHDIR / "motif_enrich_report_{sample}.benchmark.txt"
     shell:
         "{PATH.report_html} motiffig {output.html} {input.tsv} {wildcards.sample}"
 
 
-rule generate_rnaseq_report:
+rule report_rnaseq:
     """Render the coralsnake rnaseq_qc metrics into a per-sample QC table.
 
     Reads internal_files/qc/rnaseq/{sample}.metrics.tsv (read length, fragment
@@ -1491,7 +1488,7 @@ rule generate_rnaseq_report:
     output:
         INTERNALDIR / "stats/report/rnaseq.html",
     benchmark:
-        BENCHDIR / "generate_rnaseq_report.benchmark.txt"
+        BENCHDIR / "report_rnaseq.benchmark.txt"
     shell:
         "{PATH.report_html} rnaseq {output} {input}"
 
@@ -1502,17 +1499,17 @@ rule final_report:
         # All report sections, referenced uniformly via ``rules.<rule>.output``.
         rules.report_qc_trimmed.output,
         rules.unmapped_report.output,
-        rules.generate_mapping_report.output,
-        rules.generate_site_report.output,
-        rules.generate_sites_extra_report.output,
-        rules.generate_rnaseq_report.output,
+        rules.report_mapping.output,
+        rules.report_sites.output,
+        rules.report_extra.output,
+        rules.report_rnaseq.output,
         expand(
-            rules.generate_motifconv_report.output,
+            rules.report_motif.output,
             sample=SAMPLE2DATA.keys(),
             reftype=SITE_REFTYPES,
         ),
         expand(
-            rules.generate_motif_enrich_report.output,
+            rules.report_enrich.output,
             sample=SAMPLE2DATA.keys(),
         ),
     output:
