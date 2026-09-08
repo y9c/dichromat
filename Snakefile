@@ -1173,9 +1173,9 @@ rule run_countmut:
         # spurious complement-strand rows automatically (no --target-base
         # needed).  All downstream consumers guard on u1+m1>0.
         site_filter=lambda wildcards: (
-            "base == 'C' and (c + t) > 0"
+            'base == "C" and (c + t) > 0'
             if config.get("pileup_ct", False)
-            else "base == 'A' and (a + g) > 0"
+            else 'base == "A" and (a + g) > 0'
         ),
         # \t is expanded by the C core (\t in --fmt-header; Lua string
         # literal in --output-format), so the shell sees plain text.
@@ -1189,7 +1189,16 @@ rule run_countmut:
     benchmark:
         BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
     shell:
-        "{PATH.countmut} -i {input.bam} -r {input.ref} -o - -t {threads} -e \"{params.router}\" -p \"{params.site_filter}\" --motif-pad 15 --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\" | {PATH.bgzip} -@ {threads} -c > {output}"
+        """
+        set -euo pipefail
+        # countmut writes to a file (not stdout); write to a temp file then bgzip.
+        tmp=$(mktemp)
+        {PATH.countmut} -i {input.bam} -r {input.ref} -o $tmp -t {threads} \
+            -e \"{params.router}\" -p \"{params.site_filter}\" --motif-pad 15 \
+            --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\"
+        {PATH.bgzip} -@ {threads} -c $tmp > {output}
+        rm -f $tmp
+        """
 
 
 rule motif_rate:
