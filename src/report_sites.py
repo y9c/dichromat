@@ -82,9 +82,9 @@ def main():
         if _has_sites:
             logo_html = os.path.join(tmpdir, "logo.html")
             run(f"zcat {args.sites} | awk -F '\\t' 'NR==1{{for(i=7;i<=NF;i++) "
-                f"if($$i ~ /^Depth_/) d[i]=1; next}} "
-                f"{{s=0; for(i in d) s+=$$i; if($$6 ~ /^[ACGTUNn]+$/ && s>0) "
-                f"print $$6 \"\\t\" s}}' | {CORALSNAKE} logo -i - --matrix {logo_html}")
+                f"if($i ~ /^Depth_/) d[i]=1; next}} "
+                f"{{s=0; for(i in d) s+=$i; if($6 ~ /^[ACGTUNn]+$/ && s>0) "
+                f"print $6 \"\\t\" s}}' | {CORALSNAKE} logo -i - --matrix {logo_html}")
             sections.append(logo_html)
 
         # 4. per-sample motif conversion + enrichment (skip if no motif data)
