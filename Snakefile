@@ -335,7 +335,7 @@ rule all:
         expand("report_sites/grouped/{group}.parquet", group=GROUP2SAMPLE.keys()),
         expand(INTERNALDIR / "qc/rnaseq/{sample}.metrics.tsv", sample=SAMPLE2DATA.keys()),
         [
-            INTERNALDIR / f"fastq/discarded/{sample}_{rn}_{rd}.fq.gz"
+            INTERNALDIR / f"fastq/discarded/{get_lib_subdir(sample, rn)}/{sample}_{rn}_{rd}.fq.gz"
             for sample, v in SAMPLE2DATA.items()
             for rn, v2 in v.items()
             for rd in v2.keys()
@@ -494,8 +494,8 @@ rule trim_se:
         lambda wildcards: SAMPLE2DATA[wildcards.sample][wildcards.rn].get("R1") or [],
     output:
         c=temp(TEMPDIR / "trim/SE/{sample}_{rn}_R1.fq.gz"),
-        s=temp(TEMPDIR / "trim/SE/{sample}_{rn}_discarded_R1.fq.gz"),
-        report=temp(TEMPDIR / "trim/SE/{sample}_{rn}_mqc.tsv"),
+        s=INTERNALDIR / "fastq/discarded/SE/{sample}_{rn}_R1.fq.gz",
+        report=INTERNALDIR / "qc/trimming/SE/{sample}_{rn}_mqc.tsv",
     params:
         minlen=config.get("min_len", 20),
         trim=str(config.get("trim", True)).lower(),
@@ -522,9 +522,9 @@ rule trim_pe:
     output:
         c1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R1.fq.gz"),
         c2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_R2.fq.gz"),
-        s1=temp(TEMPDIR / "trim/PE/{sample}_{rn}_discarded_R1.fq.gz"),
-        s2=temp(TEMPDIR / "trim/PE/{sample}_{rn}_discarded_R2.fq.gz"),
-        report=temp(TEMPDIR / "trim/PE/{sample}_{rn}_mqc.tsv"),
+        s1=INTERNALDIR / "fastq/discarded/PE/{sample}_{rn}_R1.fq.gz",
+        s2=INTERNALDIR / "fastq/discarded/PE/{sample}_{rn}_R2.fq.gz",
+        report=INTERNALDIR / "qc/trimming/PE/{sample}_{rn}_mqc.tsv",
     params:
         minlen=config.get("min_len", 20),
         trim=str(config.get("trim", True)).lower(),
@@ -545,38 +545,6 @@ rule trim_pe:
             {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc -o {output.c1} {output.c2} -d {output.s1} {output.s2} --json-file {output.report} {input.r1} {input.r2}
         fi
         """
-
-
-rule finalize_trim_report:
-    input:
-        lambda wildcards: (
-            TEMPDIR / f"trim/PE/{wildcards.sample}_{wildcards.rn}_mqc.tsv"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR / f"trim/SE/{wildcards.sample}_{wildcards.rn}_mqc.tsv"
-        ),
-    output:
-        INTERNALDIR / "qc/trimming/{sample}_{rn}_mqc.tsv",
-    benchmark:
-        BENCHDIR / "finalize_trim_report_{sample}_{rn}.benchmark.txt"
-    shell:
-        "cp {input} {output}"
-
-
-rule finalize_discarded_reads:
-    input:
-        lambda wildcards: (
-            TEMPDIR
-            / f"trim/PE/{wildcards.sample}_{wildcards.rn}_discarded_{wildcards.rd}.fq.gz"
-            if is_pe(wildcards.sample, wildcards.rn)
-            else TEMPDIR
-            / f"trim/SE/{wildcards.sample}_{wildcards.rn}_discarded_{wildcards.rd}.fq.gz"
-        ),
-    output:
-        INTERNALDIR / "fastq/discarded/{sample}_{rn}_{rd}.fq.gz",
-    benchmark:
-        BENCHDIR / "finalize_discarded_reads_{sample}_{rn}_{rd}.benchmark.txt"
-    shell:
-        "cp {input} {output}"
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +626,7 @@ rule map_cascade:
         tx=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.transcript.bam") if has_layer("transcript") else [],
         genome=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genome.bam"),
         unmap=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.final_unmap.fq"),
-        summary=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.summary"),
+        summary=INTERNALDIR / "stats/map/{libmode}/{sample}_{rn}.summary",
     threads: 128
     benchmark:
         BENCHDIR / "map_cascade_{libmode}_{sample}_{rn}.benchmark.txt"
@@ -709,20 +677,6 @@ rule finalize_map_bam:
         BENCHDIR / "finalize_map_bam_{sample}_{rn}_{reftype}.benchmark.txt"
     shell:
         "{PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output} {input}"
-
-
-rule finalize_map_summary:
-    input:
-        lambda wildcards: (
-            TEMPDIR
-            / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.summary"
-        ),
-    output:
-        INTERNALDIR / "stats/map/{sample}_{rn}.summary",
-    benchmark:
-        BENCHDIR / "finalize_map_summary_{sample}_{rn}.benchmark.txt"
-    shell:
-        "cp {input} {output}"
 
 
 rule finalize_unmapped_fq:
@@ -950,7 +904,7 @@ rule liftover_sites:
 rule count_reads:
     input:
         report=lambda wildcards: [
-            INTERNALDIR / f"qc/trimming/{wildcards.sample}_{r}_mqc.tsv"
+            INTERNALDIR / f"qc/trimming/{get_lib_subdir(wildcards.sample, r)}/{wildcards.sample}_{r}_mqc.tsv"
             for r in SAMPLE2DATA[wildcards.sample].keys()
         ],
         count1=(
@@ -1279,11 +1233,11 @@ rule mqc_mapping:
             sample=SAMPLE2DATA.keys(),
             reftype=REFTYPES,
         ),
-        trim_jsons=expand(
-            INTERNALDIR / "qc/trimming/{sample}_{rn}_mqc.tsv",
-            sample=SAMPLE2DATA.keys(),
-            rn=["run1"],
-        ),
+        trim_jsons=[
+            INTERNALDIR / f"qc/trimming/{get_lib_subdir(s, r)}/{s}_{r}_mqc.tsv"
+            for s in SAMPLE2DATA
+            for r in SAMPLE2DATA[s]
+        ],
     output:
         mapping=INTERNALDIR / "stats/mqc/reads/mapping_stats_mqc.tsv",
         dedup=INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
@@ -1340,11 +1294,11 @@ rule report_mapping:
         INTERNALDIR / "stats/mqc/reads/dedup_stats_mqc.tsv",
         # map_cascade produces ONE summary with all layer stats; the old
         # premap/mainmap/remap split is gone.
-        expand(
-            INTERNALDIR / "stats/map/{sample}_{rn}.summary",
-            sample=SAMPLE2DATA.keys(),
-            rn=["run1"],
-        ),
+        [
+            INTERNALDIR / f"stats/map/{get_lib_subdir(s, r)}/{s}_{r}.summary"
+            for s in SAMPLE2DATA
+            for r in SAMPLE2DATA[s]
+        ],
     output:
         "report_reads/mapping.html",
     params:
