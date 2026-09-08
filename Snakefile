@@ -946,17 +946,17 @@ rule rnaseq_qc:
         outdir = INTERNALDIR / "qc/rnaseq"
         outdir.mkdir(parents=True, exist_ok=True)
         # PE if any run of the sample is paired-end.
-        is_pe_sample = any(is_pe(sample, rn) for rn in SAMPLE2DATA[sample])
+        is_pe_sample = any(is_pe(wildcards.sample, rn) for rn in SAMPLE2DATA[wildcards.sample])
         unpaired = "" if is_pe_sample else "--unpaired"
         shell(
             "{PATH.coralsnake} qc --bam {input.bam} --gtf {input.gtf} "
-            "--outdir {outdir} --sample {sample} {unpaired} "
+            "--outdir {outdir} --sample {wildcards.sample} {unpaired} "
             "--mapping-quality 20"
         )
-        shutil.move(outdir / f"{sample}.metrics.tsv", output.metrics)
-        shutil.move(outdir / f"{sample}.gene_reads.tsv", output.genes)
-        shutil.move(outdir / f"{sample}.gene_tpm.tsv", output.tpm)
-        shutil.move(outdir / f"{sample}.exon_reads.tsv", output.exons)
+        shutil.move(outdir / f"{wildcards.sample}.metrics.tsv", output.metrics)
+        shutil.move(outdir / f"{wildcards.sample}.gene_reads.tsv", output.genes)
+        shutil.move(outdir / f"{wildcards.sample}.gene_tpm.tsv", output.tpm)
+        shutil.move(outdir / f"{wildcards.sample}.exon_reads.tsv", output.exons)
 
 
 rule liftover_bam:
