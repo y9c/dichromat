@@ -182,13 +182,17 @@ HAS_CONTAM = bool(REF.get("contamination"))
 # bacteria with no spliced transcriptome) uses a pipeline YAML with just the
 # ``genome`` layer and the pipeline automatically skips the transcript layer
 # (reference build, index, mapping, liftover, merge).
-PIPELINE_YAML = config.get("pipeline", "pipeline_m6A.yaml")
-PIPELINE_PATH = Path(workflow.basedir) / PIPELINE_YAML
-if not PIPELINE_PATH.exists():
-    raise SystemExit(f"pipeline YAML not found: {PIPELINE_PATH}")
-with open(PIPELINE_PATH) as _pf:
-    _pipeline_cfg = yaml.safe_load(_pf)
-_pipeline_layers = [l for l in _pipeline_cfg.get("layers", []) if l.get("key")]
+# The prismalign mapping layers are declared inline in the config (``mapping:``
+# block), so there is no separate pipeline YAML to maintain.  The Snakefile
+# derives the active reftypes here and generates the prismalign pipeline YAML
+# that the map_cascade rule consumes (see rule generate_pipeline_config).
+_mapping_cfg = config.get("mapping", {})
+if not isinstance(_mapping_cfg, dict) or not _mapping_cfg.get("layers"):
+    raise SystemExit("config 'mapping' block missing or has no 'layers'")
+_pipeline_layers = [l for l in _mapping_cfg.get("layers", []) if l.get("key")]
+# The generated prismalign pipeline YAML path (written by generate_pipeline_config
+# into the run/workspace directory, so each run gets its own copy).
+PIPELINE_PATH = "mapping.generated.yaml"
 LAYER_KEYS = [str(l.get("key")) for l in _pipeline_layers]
 HAS_TRANSCRIPT = "transcript" in LAYER_KEYS
 HAS_GENOME = "genome" in LAYER_KEYS
@@ -257,6 +261,31 @@ rule all:
 # ---------------------------------------------------------------------------
 # Phase 1: Reference & index preparation
 # ---------------------------------------------------------------------------
+
+
+rule generate_pipeline_config:
+    """Write the prismalign pipeline YAML from the config ``mapping`` block.
+
+    The mapping layers are declared inline in config.yaml (single source of
+    truth); this rule serialises them to the pipeline YAML file that the
+    map_cascade rule passes to prismalign.  Keeping the layers in config (not
+    a hand-maintained YAML) avoids drift between the two.
+    """
+    output:
+        pipeline=PIPELINE_PATH,
+    benchmark:
+        BENCHDIR / "generate_pipeline_config.benchmark.txt"
+    run:
+        import yaml as _yaml
+        import os
+        cfg = dict(_mapping_cfg)
+        cfg.setdefault("threads", 128)
+        cfg.setdefault("index_dir", "internal_files/ref/map_index")
+        _dir = os.path.dirname(str(output.pipeline))
+        if _dir:
+            os.makedirs(_dir, exist_ok=True)
+        with open(output.pipeline, "w") as _f:
+            _yaml.safe_dump(cfg, _f, default_flow_style=False, sort_keys=False)
 
 
 rule internal_readme:
@@ -537,6 +566,7 @@ rule report_qc_trimmed:
 
 rule map_cascade:
     input:
+        pipeline=PIPELINE_PATH,
         fq1=lambda wildcards: (
             TEMPDIR / f"trim/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}_R1.fq.gz"
         ),
@@ -562,7 +592,7 @@ rule map_cascade:
         BENCHDIR / "map_cascade_{libmode}_{sample}_{rn}.benchmark.txt"
     params:
         # The prismalign pipeline YAML (declares which layers run).
-        pipeline=str(PIPELINE_PATH),
+        pipeline=PIPELINE_PATH,
         max_mismatches=config.get("max_mismatches", 2),
         # The genome hisat-3n index prefix is a directory-style prefix (not a
         # single file), so it is referenced directly (not via input, which

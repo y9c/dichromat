@@ -82,3 +82,5 @@ plots/
 
 # Local VM build config (contains private SSH key paths / node names)
 .sif-vm-build-env
+# Generated prismalign mapping YAML (from config 'mapping:' block)
+mapping.generated.yaml

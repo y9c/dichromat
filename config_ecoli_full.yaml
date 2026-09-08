@@ -5,7 +5,28 @@
 container: "development/dichromat.sif"
 batch: "ecoli_genome_full"
 
-pipeline: pipeline_genome_only.yaml
+# Mapping layers (single genome layer; the Snakefile generates the prismalign
+# pipeline YAML from this block).
+mapping:
+  threads: 128
+  index_dir: internal_files/ref/map_index
+  layers:
+    - key: genome
+      role: post
+      site: true
+      engine: bwa-mem2
+      scheme: MK
+      mutation_classes:
+        - name: A_to_G
+          source: A
+          target: G
+        - name: C_to_T
+          source: C
+          target: T
+      filter:
+        min_mapping_ratio: 0.8
+        max_conversion_rates: [1.0, 0.33]
+      em: true
 
 base_change: 'A,G'
 secondary_change: 'C,T'
