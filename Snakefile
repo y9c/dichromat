@@ -1067,7 +1067,7 @@ rule run_countmut:
         bai=INTERNALDIR / "bam/{sample}.{reftype}.bam.bai",
         ref=lambda wildcards: REF_BY_LAYER[wildcards.reftype],
     output:
-        temp(TEMPDIR / "pileup/{sample}.{reftype}.tsv"),
+        INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
     params:
         # 2-group router (countmut >= 0.2.2): group 1 = high-conversion bases
         # (legacy 0.0.8 gate), group 0 = all other kept bases; NS > max_sub
@@ -1357,120 +1357,87 @@ rule report_mapping:
 
 
 rule report_sites:
+    """Render all site-related report sections into one sites.html.
+
+    Sections: the site table (from mqc stats), metagene coverage + sequence
+    logo (from sites.tsv.gz), and per-sample motif conversion + enrichment
+    (from the per-motif rate tables).  Each section is rendered to a temp HTML
+    then assembled into report_sites/sites.html.
+    """
     input:
-        INTERNALDIR / "stats/mqc/sites/motif_conversion_mqc.tsv",
-        INTERNALDIR / "stats/mqc/sites/site_summary_mqc.tsv",
-        INTERNALDIR / "stats/mqc/sites/site_distribution_mqc.tsv",
-        INTERNALDIR / "stats/mqc/sites/site_depth_mqc.tsv",
-        expand(
+        # site table stats (from mqc_sites)
+        mqc=expand(
+            INTERNALDIR / "stats/mqc/sites/{f}",
+            f=["motif_conversion_mqc.tsv", "site_summary_mqc.tsv",
+               "site_distribution_mqc.tsv", "site_depth_mqc.tsv"],
+        ),
+        motif_ratio=expand(
             INTERNALDIR / "stats/mqc/sites/motif_ratio_{reftype}_mqc.tsv",
             reftype=SITE_REFTYPES,
         ),
-    output:
-        "report_sites/sites.html",
-    params:
-        report_name="sites.html",
-        report_dir=str(Path("report_sites")),
-    benchmark:
-        BENCHDIR / "report_sites.benchmark.txt"
-    shell:
-        "{PATH.report_html} tables {output} {input}"
-
-
-rule metagene_profile:
-    """Metagene coverage distribution of the remapped sites (machine-readable)."""
-    input:
+        # site context (metagene + logo)
         sites="report_sites/sites.tsv.gz",
         gtf=REF["genome"]["gtf"],
-    output:
-        prof=INTERNALDIR / "stats/report/metagene_profile.tsv",
-    threads: 8
-    benchmark:
-        BENCHDIR / "metagene_profile.benchmark.txt"
-    shell:
-        """
-        {PATH.coralsnake} metagene -i {input.sites} -g {input.gtf} -H \
-            --meta-columns 1,2,3 --bins 100 --export-profile {output.prof}
-        """
-
-
-rule logo_matrix:
-    """Sequence-context logo around remapped sites (matrix, not a figure).
-
-    Uses the per-site context already present in the sites table (`Motif`
-    column), weighted by total depth across libraries.
-    """
-    input:
-        sites="report_sites/sites.tsv.gz",
-    output:
-        matrix=INTERNALDIR / "stats/report/logo_matrix.tsv",
-    threads: 8
-    benchmark:
-        BENCHDIR / "logo_matrix.benchmark.txt"
-    shell:
-        """
-        zcat {input.sites} \
-          | awk -F '\\t' 'NR==1{{for(i=7;i<=NF;i++) if($$i ~ /^Depth_/) d[i]=1; next}} \
-              {{s=0; for(i in d) s+=$$i; if($$6 ~ /^[ACGTUNn]+$$/ && s>0) print $$6 "\\t" s}}' \
-          | {PATH.coralsnake} logo -i - --matrix {output.matrix}
-        """
-
-
-rule report_extra:
-    """Render metagene coverage + sequence logo sections (sample-independent)."""
-    input:
-        prof=rules.metagene_profile.output.prof,
-        matrix=rules.logo_matrix.output.matrix,
-    output:
-        meta=INTERNALDIR / "stats/report/metagene.html",
-        logo=INTERNALDIR / "stats/report/logo.html",
-    benchmark:
-        BENCHDIR / "report_extra.benchmark.txt"
-    shell:
-        """
-        {PATH.report_html} metagene {output.meta} {input.prof}
-        {PATH.report_html} logo {output.logo} {input.matrix}
-        """
-
-
-rule report_motif:
-    """Per-motif conversion-rate section (one per sample x reftype)."""
-    input:
-        INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
-    output:
-        INTERNALDIR / "stats/report/motif.{sample}.{reftype}.html",
-    benchmark:
-        BENCHDIR / "report_motif_{sample}_{reftype}.benchmark.txt"
-    shell:
-        "{PATH.report_html} motifconv {output} {input}"
-
-
-rule motif_enrich:
-    """Per-motif enrichment & conversion summary (genome candidates vs
-    filtered sites): one row per 3-mer with candidates, filtered count,
-    enrichment per 1,000 candidates and depth-weighted conversion
-    (high-quality vs all reads) from the 8-column countmut pileup."""
-    input:
-        by_motif=INTERNALDIR / "stats/ratio/by_motif/{sample}.genome.tsv",
+        # per-sample motif conversion + enrichment
+        by_motif=expand(
+            INTERNALDIR / "stats/ratio/by_motif/{sample}.{reftype}.tsv",
+            sample=SAMPLE2DATA.keys(),
+            reftype=SITE_REFTYPES,
+        ),
+        by_motif_genome=expand(
+            INTERNALDIR / "stats/ratio/by_motif/{sample}.genome.tsv",
+            sample=SAMPLE2DATA.keys(),
+        ),
         filtered="report_sites/filtered.tsv",
     output:
-        tsv=INTERNALDIR / "stats/report/motif_enrich.{sample}.tsv",
+        "report_sites/sites.html",
+    threads: 8
     benchmark:
-        BENCHDIR / "motif_enrich_{sample}.benchmark.txt"
-    shell:
-        "{PATH.motif_enrich} -i {input.by_motif} -f {input.filtered} -s {wildcards.sample} -o {output.tsv}"
+        BENCHDIR / "report_sites.benchmark.txt"
+    run:
+        import os, tempfile, subprocess, shutil
+        tmpdir = tempfile.mkdtemp(prefix="report_sites_")
+        try:
+            def run(cmd):
+                subprocess.run(cmd, shell=True, check=True)
 
-
-rule report_enrich:
-    """Render the motif enrichment section of the final report (one per sample)."""
-    input:
-        tsv=rules.motif_enrich.output.tsv,
-    output:
-        html=INTERNALDIR / "stats/report/motif_enrich.{sample}.html",
-    benchmark:
-        BENCHDIR / "motif_enrich_report_{sample}.benchmark.txt"
-    shell:
-        "{PATH.report_html} motiffig {output.html} {input.tsv} {wildcards.sample}"
+            # 1. site table
+            table_html = os.path.join(tmpdir, "table.html")
+            run(f"{PATH.report_html} tables {table_html} "
+                + " ".join(str(p) for p in input.mqc)
+                + " " + " ".join(str(p) for p in input.motif_ratio))
+            # 2. metagene (compute + render)
+            prof = os.path.join(tmpdir, "metagene.tsv")
+            run(f"{PATH.coralsnake} metagene -i {input.sites} -g {input.gtf} -H "
+                f"--meta-columns 1,2,3 --bins 100 --export-profile {prof}")
+            meta_html = os.path.join(tmpdir, "metagene.html")
+            run(f"{PATH.report_html} metagene {meta_html} {prof}")
+            # 3. logo (compute + render)
+            logo_html = os.path.join(tmpdir, "logo.html")
+            run(f"zcat {input.sites} | awk -F '\\t' 'NR==1{{for(i=7;i<=NF;i++) if($$i ~ /^Depth_/) d[i]=1; next}} "
+                f"{{s=0; for(i in d) s+=$$i; if($$6 ~ /^[ACGTUNn]+$/ && s>0) print $$6 \"\\t\" s}}' "
+                f"| {PATH.coralsnake} logo -i - --matrix {logo_html}")
+            # 4. per-sample motif conversion + enrichment
+            sections = [table_html, meta_html, logo_html]
+            by_motif = [str(p) for p in input.by_motif]
+            by_motif_genome = [str(p) for p in input.by_motif_genome]
+            for si, sample in enumerate(SAMPLE2DATA):
+                for reftype in SITE_REFTYPES:
+                    motif_html = os.path.join(tmpdir, f"motif_{sample}_{reftype}.html")
+                    run(f"{PATH.report_html} motifconv {motif_html} "
+                        + " ".join(by_motif))
+                    sections.append(motif_html)
+                enrich_tsv = os.path.join(tmpdir, f"enrich_{sample}.tsv")
+                run(f"{PATH.motif_enrich} -i {by_motif_genome[si]} -f {input.filtered} "
+                    f"-s {sample} -o {enrich_tsv}")
+                enrich_html = os.path.join(tmpdir, f"enrich_{sample}.html")
+                run(f"{PATH.report_html} motiffig {enrich_html} {enrich_tsv} {sample}")
+                sections.append(enrich_html)
+            # 5. assemble
+            os.makedirs(os.path.dirname(str(output)), exist_ok=True)
+            run(f"{PATH.report_html} assemble {output} " + " ".join(sections))
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 rule report_rnaseq:
@@ -1500,18 +1467,8 @@ rule final_report:
         rules.report_qc_trimmed.output,
         rules.unmapped_report.output,
         rules.report_mapping.output,
-        rules.report_sites.output,
-        rules.report_extra.output,
+        rules.report_sites.output,   # site table + metagene + logo + motif + enrich
         rules.report_rnaseq.output,
-        expand(
-            rules.report_motif.output,
-            sample=SAMPLE2DATA.keys(),
-            reftype=SITE_REFTYPES,
-        ),
-        expand(
-            rules.report_enrich.output,
-            sample=SAMPLE2DATA.keys(),
-        ),
     output:
         "report.html",
     benchmark:
