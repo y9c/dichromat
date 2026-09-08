@@ -1469,6 +1469,9 @@ rule report_sites:
         reftypes=" ".join(SITE_REFTYPES),
     shell:
         """
+        export REPORT_HTML="{PATH.report_html}"
+        export CORALSNAKE="{PATH.coralsnake}"
+        export MOTIF_ENRICH="{PATH.motif_enrich}"
         {PATH.report_sites} {output} \
             --mqc {input.mqc} \
             --motif-ratio {input.motif_ratio} \
