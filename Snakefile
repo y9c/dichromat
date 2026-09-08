@@ -1062,19 +1062,7 @@ rule run_countmut:
     benchmark:
         BENCHDIR / "run_countmut_{sample}_{reftype}.benchmark.txt"
     shell:
-        "{PATH.countmut} -i {input.bam} -r {input.ref} -o {output} -t {threads} -e \"{params.router}\" -p \"{params.site_filter}\" --motif-pad 15 --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\" > /dev/null"
-
-
-rule pileup_base:
-    input:
-        TEMPDIR / "pileup/{sample}.{reftype}.tsv",
-    output:
-        INTERNALDIR / "pileup/per_sample/{sample}.{reftype}.tsv.gz",
-    threads: 64
-    benchmark:
-        BENCHDIR / "pileup_base_{sample}_{reftype}.benchmark.txt"
-    shell:
-        "{PATH.bgzip} -@ {threads} -c {input} > {output}"
+        "{PATH.countmut} -i {input.bam} -r {input.ref} -o - -t {threads} -e \"{params.router}\" -p \"{params.site_filter}\" --motif-pad 15 --fmt-header \"{params.fmt_header}\" --output-format \"{params.output_fmt}\" | {PATH.bgzip} -@ {threads} -c > {output}"
 
 
 rule motif_rate:
