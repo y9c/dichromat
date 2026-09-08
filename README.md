@@ -71,7 +71,6 @@ samples:
 # Options
 is_etam: true              # eTAM analysis mode
 adapter: "AGATCGGA..."     # Custom adapter OR use libtype: "TAKARAV3"
-base_change: "A,G"         # m6A/GLORI: A,G  |  BS-seq: C,T
 ```
 
 </details>

@@ -32,11 +32,6 @@ mapping:
         max_conversion_rates: [1.0, 0.33]
       em: true
 
-base_change: 'A,G'
-secondary_change: 'C,T'
-splice_genome: false
-depth_site: true
-
 reference:
   - key: genome
     fa: /data/project/changye/chye/projects/m6A_new/workspaces/workspace_ecoli_glori_genome/ref/genome.fa

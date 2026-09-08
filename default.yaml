@@ -40,7 +40,6 @@ min_mapping_ratio: 0.8
 max_mismatches: 2
 markdup: true
 pileup_ct: false
-depth_site: false
 
 # countmut read-gate parameters (the -e group router; defaults mirror the
 # legacy 0.0.8 gate).

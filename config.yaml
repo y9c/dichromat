@@ -2,11 +2,6 @@ container: "development/dichromat.sif"
 is_etam: true
 batch: "sample1_debug"
 
-base_change: 'A,G'
-secondary_change: 'C,T'
-splice_genome: true
-depth_site: true
-
 reference:
   contamination:
     - ~/reference/contamination/contamination.fa

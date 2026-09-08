@@ -114,19 +114,36 @@ jobs:
       - name: Create test config
         run: |
           cat > test_config.yaml << 'EOF'
-          base_change: 'A,G'
           adapter: GACGTGTGCTCTTCCGATCT
           min_len: 20
           markdup: false
-          splice_genome: false
           pileup_ct: false
-          depth_site: false
+
+          mapping:
+            threads: 8
+            index_dir: internal_files/ref/map_index
+            layers:
+              - key: genome
+                role: post
+                site: true
+                engine: bwa-mem2
+                scheme: MK
+                mutation_classes:
+                  - name: A_to_G
+                    source: A
+                    target: G
+                  - name: C_to_T
+                    source: C
+                    target: T
+                filter:
+                  min_mapping_ratio: 0.8
+                  max_conversion_rates: [1.0, 0.33]
+                em: true
 
           reference:
-            genome:
+            - key: genome
               fa: test_data/genome.fa
               gtf: test_data/genes.gtf
-              hisat3n: test_data/genome
 
           samples:
             test_sample:

@@ -199,17 +199,17 @@ LAYER_KEYS = [str(l.get("key")) for l in _pipeline_layers]
 # Derive the base-change / secondary-change (the conversion chemistry) from the
 # first layer's ``mutation_classes`` (single source of truth).  base_change is
 # the comma-joined source bases (e.g. "A,C"); secondary_change the targets
-# (e.g. "G,T").  Falls back to the (now-removed) config keys for compatibility.
+# (e.g. "G,T").
 _first_mut_classes = next(
     (l.get("mutation_classes") for l in _pipeline_layers if l.get("mutation_classes")),
     None,
 )
-if _first_mut_classes:
-    BASE_CHANGE = ",".join(str(c.get("source")) for c in _first_mut_classes)
-    SECONDARY_CHANGE = ",".join(str(c.get("target")) for c in _first_mut_classes)
-else:
-    BASE_CHANGE = config.get("base_change", "A,G")
-    SECONDARY_CHANGE = config.get("secondary_change", "")
+if not _first_mut_classes:
+    raise ValueError("No layer declares `mutation_classes`; the conversion "
+                     "chemistry (base_change/secondary_change) must be "
+                     "declared via `mutation_classes` in the mapping block.")
+BASE_CHANGE = ",".join(str(c.get("source")) for c in _first_mut_classes)
+SECONDARY_CHANGE = ",".join(str(c.get("target")) for c in _first_mut_classes)
 
 # Global alignment filters (used by map_cascade / countmut).  The per-layer
 # ``filter:`` in the mapping block overrides these for the layer that declares
