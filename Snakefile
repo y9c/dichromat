@@ -910,32 +910,6 @@ rule rnaseq_qc:
         shutil.move(outdir / f"{sample}.exon_reads.tsv", output.exons)
 
 
-rule liftover_sites:
-    input:
-        transcripts=INTERNALDIR / "bam/{sample}.transcript.bam" if has_layer("transcript") else [],
-        genome=INTERNALDIR / "bam/{sample}.genome.bam",
-        info=INTERNALDIR / "ref/transcript.tsv" if has_layer("transcript") else [],
-    output:
-        transcripts=temp(TEMPDIR / "liftover/{sample}.transcript.bam") if has_layer("transcript") else [],
-        bam=INTERNALDIR / "liftover_bam/{sample}.bam",
-    params:
-        fai=REF["genome"]["fa"] + ".fai",
-    threads: 8
-    benchmark:
-        BENCHDIR / "liftover_sites_{sample}.benchmark.txt"
-    shell:
-        """
-        if [ -n '{input.transcripts}' ] && [ -s '{input.transcripts}' ]; then
-            {PATH.coralsnake} liftover -t {threads} -i {input.transcripts} -o {output.transcripts} -a {input.info} -f {params.fai}
-            {PATH.samtools} cat {output.transcripts} {input.genome} | {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam}
-        else
-            # Genome-only run: no transcript layer to liftover; just copy the
-            # genome BAM through (keeps the downstream liftover_bam contract).
-            {PATH.samtools} sort -@ {threads} -m 3G -O BAM -o {output.bam} {input.genome}
-        fi
-        """
-
-
 rule count_reads:
     input:
         report=lambda wildcards: [
