@@ -52,34 +52,58 @@ def main():
     try:
         sections = []
 
+        # Detect whether the sites table has any data rows (metagene/logo need
+        # at least one site; coralsnake errors on an empty table).
+        import gzip
+        _has_sites = False
+        with gzip.open(args.sites, "rt") as _fh:
+            next(_fh, None)  # skip header
+            for _line in _fh:
+                if _line.strip():
+                    _has_sites = True
+                    break
+
         # 1. site table
         table_html = os.path.join(tmpdir, "table.html")
         run(f"{REPORT_HTML} tables {table_html} " + " ".join(args.mqc)
             + " " + " ".join(args.motif_ratio))
         sections.append(table_html)
 
-        # 2. metagene
-        prof = os.path.join(tmpdir, "metagene.tsv")
-        run(f"{CORALSNAKE} metagene -i {args.sites} -g {args.gtf} -H "
-            f"--meta-columns 1,2,3 --bins 100 --export-profile {prof}")
-        meta_html = os.path.join(tmpdir, "metagene.html")
-        run(f"{REPORT_HTML} metagene {meta_html} {prof}")
-        sections.append(meta_html)
+        # 2. metagene (skip if no sites; coralsnake errors on an empty table)
+        if _has_sites:
+            prof = os.path.join(tmpdir, "metagene.tsv")
+            run(f"{CORALSNAKE} metagene -i {args.sites} -g {args.gtf} -H "
+                f"--meta-columns 1,2,3 --bins 100 --export-profile {prof}")
+            meta_html = os.path.join(tmpdir, "metagene.html")
+            run(f"{REPORT_HTML} metagene {meta_html} {prof}")
+            sections.append(meta_html)
 
-        # 3. sequence logo
-        logo_html = os.path.join(tmpdir, "logo.html")
-        run(f"zcat {args.sites} | awk -F '\\t' 'NR==1{{for(i=7;i<=NF;i++) "
-            f"if($$i ~ /^Depth_/) d[i]=1; next}} "
-            f"{{s=0; for(i in d) s+=$$i; if($$6 ~ /^[ACGTUNn]+$/ && s>0) "
-            f"print $$6 \"\\t\" s}}' | {CORALSNAKE} logo -i - --matrix {logo_html}")
-        sections.append(logo_html)
+        # 3. sequence logo (skip if no sites)
+        if _has_sites:
+            logo_html = os.path.join(tmpdir, "logo.html")
+            run(f"zcat {args.sites} | awk -F '\\t' 'NR==1{{for(i=7;i<=NF;i++) "
+                f"if($$i ~ /^Depth_/) d[i]=1; next}} "
+                f"{{s=0; for(i in d) s+=$$i; if($$6 ~ /^[ACGTUNn]+$/ && s>0) "
+                f"print $$6 \"\\t\" s}}' | {CORALSNAKE} logo -i - --matrix {logo_html}")
+            sections.append(logo_html)
 
-        # 4. per-sample motif conversion + enrichment
-        for si, sample in enumerate(args.samples):
-            for reftype in args.reftypes:
-                motif_html = os.path.join(tmpdir, f"motif_{sample}_{reftype}.html")
-                run(f"{REPORT_HTML} motifconv {motif_html} " + " ".join(args.by_motif))
-                sections.append(motif_html)
+        # 4. per-sample motif conversion + enrichment (skip if no motif data)
+        _has_motif = False
+        for _mf in args.by_motif:
+            with open(_mf) as _fh:
+                next(_fh, None)  # skip header
+                for _line in _fh:
+                    if _line.strip():
+                        _has_motif = True
+                        break
+            if _has_motif:
+                break
+        if _has_motif:
+            for si, sample in enumerate(args.samples):
+                for reftype in args.reftypes:
+                    motif_html = os.path.join(tmpdir, f"motif_{sample}_{reftype}.html")
+                    run(f"{REPORT_HTML} motifconv {motif_html} " + " ".join(args.by_motif))
+                    sections.append(motif_html)
             if si < len(args.by_motif_genome):
                 enrich_tsv = os.path.join(tmpdir, f"enrich_{sample}.tsv")
                 run(f"{MOTIF_ENRICH} -i {args.by_motif_genome[si]} -f {args.filtered} "
