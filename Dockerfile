@@ -88,7 +88,7 @@ ENV VENV_PATH=/opt/venv
 # coralsnake 0.2.1: minus-transcript SEQ/QUAL liftover fix + t2g CIGAR fixes.
 RUN python${PYTHON_VERSION_FOR_APP} -m venv ${VENV_PATH} && \
     uv pip install --python ${VENV_PATH}/bin/python --no-cache \
-        snakemake==9.26.1 cutseq==0.0.70 markdup==0.0.29 \
+        snakemake==9.26.1 cutseq==0.0.71 markdup==0.0.29 \
         countmut==0.2.5 coralsnake==0.2.1 prismalign==0.3.6 \
         duckdb==1.5.5 polars==1.33.1 scipy==1.18.1 numpy==2.5.2 pysam==0.24.0 pyyaml==6.0.3 && \
     for t in snakemake cutseq markdup countmut coralsnake prismalign; do \
