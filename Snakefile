@@ -170,9 +170,6 @@ for s, v in samples_dict.items():
             k: os.path.expanduser(v3) for k, v3 in dict(v2).items()
         }
 
-HAS_GENES = bool(REF.get("genes"))
-HAS_CONTAM = bool(REF.get("contamination"))
-
 # The prismalign pipeline YAML is the single source of truth for which mapping
 # layers run (and their order).  Parse it here so the Snakefile's reftypes,
 # reference binding and downstream rules all follow the declared layers
@@ -222,7 +219,13 @@ COUNTMUT_MIN_CON = COUNTMUT.get("min_con", 1)
 COUNTMUT_MAX_UNC = COUNTMUT.get("max_unc", 3)
 COUNTMUT_MIN_BASEQ = COUNTMUT.get("min_baseq", 20)
 COUNTMUT_TRIM = COUNTMUT.get("trim", 2)
-HAS_TRANSCRIPT = "transcript" in LAYER_KEYS
+# Active mapping layers (single source of truth from the mapping block).  Use
+# ``has_layer(key)`` / the ``ACTIVE_LAYERS`` set instead of the old scattered
+# HAS_TRANSCRIPT / HAS_GENES / HAS_CONTAM booleans.
+ACTIVE_LAYERS = set(LAYER_KEYS)
+
+def has_layer(key: str) -> bool:
+    return key in ACTIVE_LAYERS
 HAS_GENOME = "genome" in LAYER_KEYS
 # The genome layer's engine decides how its reference is bound: a spliced
 # hisat3n genome layer uses a prebuilt ``.3n`` index prefix, while a plain
@@ -318,7 +321,7 @@ rule all:
             for rd in v2.keys()
         ],
         INTERNALDIR / "README.md",
-        INTERNALDIR / "stats/ratio/probe.tsv" if HAS_GENES else [],
+        INTERNALDIR / "stats/ratio/probe.tsv" if has_layer("genes") else [],
     benchmark:
         BENCHDIR / "all.benchmark.txt"
 
@@ -643,9 +646,9 @@ rule map_cascade:
         # Reference FASTA for each active layer (from the mapping block).
         refs=lambda wildcards: [REF_BY_LAYER[k] for k in LAYER_KEYS],
     output:
-        contam=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.contam.bam") if HAS_CONTAM else [],
-        genes=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genes.bam") if HAS_GENES else [],
-        tx=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.transcript.bam") if HAS_TRANSCRIPT else [],
+        contam=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.contam.bam") if has_layer("contamination") else [],
+        genes=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genes.bam") if has_layer("genes") else [],
+        tx=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.transcript.bam") if has_layer("transcript") else [],
         genome=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.genome.bam"),
         unmap=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.final_unmap.fq"),
         summary=temp(TEMPDIR / "map/{libmode}/{sample}_{rn}.summary"),
@@ -770,7 +773,7 @@ rule finalize_mainmap_genes_bam:
         lambda wildcards: (
             TEMPDIR
             / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.genes.bam"
-            if HAS_GENES
+            if has_layer("genes")
             else []
         ),
     output:
@@ -787,7 +790,7 @@ rule finalize_mainmap_transcript_bam:
         lambda wildcards: (
             TEMPDIR
             / f"map/{get_lib_subdir(wildcards.sample, wildcards.rn)}/{wildcards.sample}_{wildcards.rn}.transcript.bam"
-            if HAS_TRANSCRIPT
+            if has_layer("transcript")
             else []
         ),
     output:
@@ -1026,11 +1029,11 @@ rule rnaseq_qc:
 
 rule liftover_transcript_to_genome:
     input:
-        transcripts=INTERNALDIR / "bam/{sample}.transcript.bam" if HAS_TRANSCRIPT else [],
+        transcripts=INTERNALDIR / "bam/{sample}.transcript.bam" if has_layer("transcript") else [],
         genome=INTERNALDIR / "bam/{sample}.genome.bam",
-        info=INTERNALDIR / "ref/transcript.tsv" if HAS_TRANSCRIPT else [],
+        info=INTERNALDIR / "ref/transcript.tsv" if has_layer("transcript") else [],
     output:
-        transcripts=temp(TEMPDIR / "liftover/{sample}.transcript.bam") if HAS_TRANSCRIPT else [],
+        transcripts=temp(TEMPDIR / "liftover/{sample}.transcript.bam") if has_layer("transcript") else [],
         bam=INTERNALDIR / "liftover_bam/{sample}.bam",
     params:
         fai=REF["genome"]["fa"] + ".fai",
@@ -1058,26 +1061,26 @@ rule count_reads:
         ],
         count1=(
             INTERNALDIR / "stats/combined/{sample}.contamination.count"
-            if HAS_CONTAM
+            if has_layer("contamination")
             else []
         ),
         count2=(
             INTERNALDIR / "stats/dedup/{sample}.contamination.count"
-            if HAS_CONTAM
+            if has_layer("contamination")
             else []
         ),
         count3=(
-            INTERNALDIR / "stats/combined/{sample}.genes.count" if HAS_GENES else []
+            INTERNALDIR / "stats/combined/{sample}.genes.count" if has_layer("genes") else []
         ),
-        count4=(INTERNALDIR / "stats/dedup/{sample}.genes.count" if HAS_GENES else []),
+        count4=(INTERNALDIR / "stats/dedup/{sample}.genes.count" if has_layer("genes") else []),
         count5=(
             INTERNALDIR / "stats/combined/{sample}.transcript.count"
-            if HAS_TRANSCRIPT
+            if has_layer("transcript")
             else []
         ),
         count6=(
             INTERNALDIR / "stats/dedup/{sample}.transcript.count"
-            if HAS_TRANSCRIPT
+            if has_layer("transcript")
             else []
         ),
         count7=INTERNALDIR / "stats/combined/{sample}.genome.count",
@@ -1147,7 +1150,7 @@ rule cal_spike_ratio:
     input:
         bam=lambda wildcards: (
             expand(INTERNALDIR / "bam/{sample}.genes.bam", sample=SAMPLE2DATA.keys())
-            if HAS_GENES
+            if has_layer("genes")
             else []
         ),
         bai=lambda wildcards: (
@@ -1155,7 +1158,7 @@ rule cal_spike_ratio:
                 INTERNALDIR / "bam/{sample}.genes.bam.bai",
                 sample=SAMPLE2DATA.keys(),
             )
-            if HAS_GENES
+            if has_layer("genes")
             else []
         ),
     output:
@@ -1334,9 +1337,9 @@ rule merge_gene_and_genome_table:
     same Chrom/Pos/Strand/GeneName/GenePos/Motif schema.
     """
     input:
-        info=INTERNALDIR / "ref/transcript.tsv" if HAS_TRANSCRIPT else [],
+        info=INTERNALDIR / "ref/transcript.tsv" if has_layer("transcript") else [],
         transcripts=(
-            INTERNALDIR / "pileup/transcript.parquet" if HAS_TRANSCRIPT else []
+            INTERNALDIR / "pileup/transcript.parquet" if has_layer("transcript") else []
         ),
         genome=INTERNALDIR / "pileup/genome.parquet",
     output:
@@ -1349,7 +1352,7 @@ rule merge_gene_and_genome_table:
     params:
         # No transcript layer -> omit -t/-a; remap_genome passes the genome
         # pileup straight through (empty gene annotation).
-        tx_args="" if not HAS_TRANSCRIPT else "-t {input.info} -a {input.transcripts}",
+        tx_args="" if not has_layer("transcript") else "-t {input.info} -a {input.transcripts}",
     shell:
         """
         {PATH.remap_genome} {params.tx_args} -b {input.genome} -o {output} --min-depth {config[min_merged_depth]}
@@ -1495,7 +1498,7 @@ rule generate_mapping_report:
             sample=SAMPLE2DATA.keys(),
             rn=["run1"],
         )
-        if HAS_CONTAM
+        if has_layer("contamination")
         else [],
         expand(
             INTERNALDIR / "stats/mainmap/{sample}_{rn}.summary",
