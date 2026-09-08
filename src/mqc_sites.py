@@ -118,8 +118,8 @@ def main():
                 for reftype, out_path in reftype_tables.items():
                     sub = sorted([(m, r) for m, t, r in rows if t == reftype],
                                  key=lambda x: x[0])
-                    if not sub:
-                        continue
+                    # Always write the table (empty if no motifs for this
+                    # reftype) so Snakemake sees all declared outputs.
                     with open(out_path, "w", newline="") as fh:
                         fh.write("\t".join(str(m) for m, _ in sub) + "\n")
                         fh.write("\t".join(_fmt(r) for _, r in sub) + "\n")
@@ -147,14 +147,13 @@ def main():
                     "Mean Ratio": one[4 * i + 2] / cnt,
                     "Max Ratio": one[4 * i + 3],
                 })
-        if summary_rows:
-            cols = ["Sample", "Total Sites", "Mean Depth", "Mean Ratio", "Max Ratio"]
-            with open(args.summary_output, "w", newline="") as fh:
-                fh.write("\t".join(cols) + "\n")
-                for r in summary_rows:
-                    fh.write("\t".join(_fmt(v) for v in
-                             [r["Sample"], r["Total Sites"], r["Mean Depth"],
-                              r["Mean Ratio"], r["Max Ratio"]]) + "\n")
+        cols = ["Sample", "Total Sites", "Mean Depth", "Mean Ratio", "Max Ratio"]
+        with open(args.summary_output, "w", newline="") as fh:
+            fh.write("\t".join(cols) + "\n")
+            for r in summary_rows:
+                fh.write("\t".join(_fmt(v) for v in
+                         [r["Sample"], r["Total Sites"], r["Mean Depth"],
+                          r["Mean Ratio"], r["Max Ratio"]]) + "\n")
 
         # 3. Histograms (per library; one column at a time)
         logging.info("Building histograms...")
