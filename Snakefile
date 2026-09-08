@@ -620,6 +620,8 @@ rule trim_reads:
             {params.pe_cp} gzip -n -c /dev/null > {output.s2} && \
             printf 'sample\trun\tinput_reads\toutput_reads\tdiscarded_reads\tadapter\n{wildcards.sample}\t{wildcards.rn}\t0\t0\t0\tpassthrough\n' > {output.report}
         else
+            # cutseq does not create output directories; make them first.
+            mkdir -p $(dirname {output.c1}) $(dirname {output.s1}) $(dirname {output.report})
             {PATH.cutseq} -t {threads} {params.cut} -m {params.minlen} --auto-rc \
                 {params.cutseq_args}
         fi
