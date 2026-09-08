@@ -1173,9 +1173,9 @@ rule run_countmut:
         # spurious complement-strand rows automatically (no --target-base
         # needed).  All downstream consumers guard on u1+m1>0.
         site_filter=lambda wildcards: (
-            'base == "C" and (c + t) > 0'
+            'base == \\"C\\" and (c + t) > 0'
             if config.get("pileup_ct", False)
-            else 'base == "A" and (a + g) > 0'
+            else 'base == \\"A\\" and (a + g) > 0'
         ),
         # \t is expanded by the C core (\t in --fmt-header; Lua string
         # literal in --output-format), so the shell sees plain text.
